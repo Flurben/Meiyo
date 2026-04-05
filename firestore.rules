@@ -1,0 +1,71 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required) - The user's unique ID
+    //   - displayName: string (required) - The user's display name
+    //   - email: string (optional) - The user's email address
+    //   - photoURL: string (optional) - The user's photo URL
+    //
+    // Collection: games
+    // Document ID: {gameId}
+    // Fields:
+    //   - players: list (required) - List of player objects
+    //   - map: map (required) - Serialized hex map data
+    //   - currentTurn: int (required) - Index of the current player
+    //   - status: string (required) - "lobby", "playing", or "finished"
+    //   - winnerId: string (optional) - ID of the winner
+    //   - lastUpdated: timestamp (optional) - Last update time
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'displayName']) &&
+             data.uid is string && data.uid.size() > 0 && data.uid.size() < 128 &&
+             data.displayName is string && data.displayName.size() > 0 && data.displayName.size() < 100;
+    }
+
+    function isValidGame(data) {
+      return data.keys().hasAll(['players', 'map', 'currentTurn', 'status']) &&
+             data.players is list && data.players.size() <= 6 &&
+             data.map is map &&
+             data.currentTurn is int &&
+             data.status in ['lobby', 'playing', 'finished'];
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data);
+    }
+
+    match /games/{gameId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidGame(request.resource.data);
+      allow update: if isAuthenticated() && isValidGame(request.resource.data);
+    }
+  }
+}

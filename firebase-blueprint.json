@@ -1,0 +1,54 @@
+{
+  "entities": {
+    "Game": {
+      "title": "Game",
+      "description": "A multiplayer game session",
+      "type": "object",
+      "properties": {
+        "players": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "color": { "type": "string" },
+              "gold": { "type": "number" }
+            }
+          }
+        },
+        "map": {
+          "type": "object",
+          "description": "Serialized map data"
+        },
+        "currentTurn": { "type": "integer" },
+        "status": { "type": "string", "enum": ["lobby", "playing", "finished"] },
+        "winnerId": { "type": "string" },
+        "lastUpdated": { "type": "string", "format": "date-time" }
+      },
+      "required": ["players", "map", "currentTurn", "status"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "photoURL": { "type": "string" }
+      },
+      "required": ["uid", "displayName"]
+    }
+  },
+  "firestore": {
+    "/games/{gameId}": {
+      "schema": "Game",
+      "description": "Active game sessions"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    }
+  }
+}
