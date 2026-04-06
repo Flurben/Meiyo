@@ -1,0 +1,63 @@
+{
+  "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL - PTERODACTYL.IO",
+  "meta": {
+    "version": "PTDL_v2",
+    "update_url": null
+  },
+  "exported_at": "2026-04-06T00:00:00Z",
+  "name": "Meiyo React Game (GitHub Sync)",
+  "author": "flurbenhurgen@gmail.com",
+  "description": "Egg for Meiyo React Game. Automatically clones from a GitHub repository, installs dependencies, builds the project, and runs it.",
+  "features": null,
+  "docker_images": {
+    "Node.js 20": "ghcr.io/pterodactyl/yolks:nodejs_20",
+    "Node.js 18": "ghcr.io/pterodactyl/yolks:nodejs_18"
+  },
+  "file_denylist": [],
+  "startup": "if [ -d .git ]; then git pull origin {{GIT_BRANCH}}; npm install; npm run build; fi; npm run start",
+  "config": {
+    "files": "{}",
+    "startup": "{\r\n    \"done\": \"ready in\"\r\n}",
+    "logs": "{}",
+    "stop": "^C"
+  },
+  "scripts": {
+    "installation": {
+      "script": "#!/bin/bash\n# GitHub Sync and Build Script\n\napt update\napt install -y git curl jq file unzip make gcc g++ python3\n\nmkdir -p /mnt/server\ncd /mnt/server\n\nif [ -z \"${GIT_REPO}\" ]; then\n  echo -e \"\\n\\nError: GIT_REPO variable is not set.\\n\"\n  exit 1\nfi\n\nif [ -d \".git\" ]; then\n  echo -e \"\\n\\nUpdating existing repository...\\n\"\n  git fetch origin\n  git reset --hard origin/${GIT_BRANCH}\nelse\n  echo -e \"\\n\\nCloning repository...\\n\"\n  git clone --branch ${GIT_BRANCH} ${GIT_REPO} .\nfi\n\necho -e \"\\n\\nInstalling dependencies...\\n\"\nnpm install\n\necho -e \"\\n\\nBuilding application...\\n\"\nnpm run build\n\necho -e \"\\n\\nInstallation complete.\\n\"",
+      "container": "ghcr.io/pterodactyl/yolks:nodejs_20",
+      "entrypoint": "bash"
+    }
+  },
+  "variables": [
+    {
+      "name": "GitHub Repository URL",
+      "description": "The URL of the GitHub repository to clone (e.g., https://github.com/username/repo.git).",
+      "env_variable": "GIT_REPO",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string",
+      "field_type": "text"
+    },
+    {
+      "name": "GitHub Branch",
+      "description": "The branch to clone and build.",
+      "env_variable": "GIT_BRANCH",
+      "default_value": "main",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string",
+      "field_type": "text"
+    },
+    {
+      "name": "Server Port",
+      "description": "The port the web server will run on.",
+      "env_variable": "SERVER_PORT",
+      "default_value": "3000",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|numeric",
+      "field_type": "text"
+    }
+  ]
+}
