@@ -17,7 +17,11 @@ import {
   RotateCcw,
   Trophy,
   HelpCircle,
-  Flag
+  Flag,
+  Bot,
+  LogOut,
+  Plus,
+  Minus
 } from 'lucide-react';
 import _ from 'lodash';
 
@@ -271,7 +275,7 @@ export const Game: React.FC = () => {
           className="max-w-md w-full bg-slate-900 p-8 rounded-3xl border border-slate-800 shadow-2xl text-center"
         >
           <div className="w-20 h-20 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-blue-900/20">
-            <Sword size={40} className="text-white" />
+            <Sword size={70} className="text-white" />
           </div>
           <h1 className="text-3xl font-black text-white mb-4">Meiyo</h1>
           <p className="text-slate-200 mb-8 leading-relaxed">
@@ -284,16 +288,17 @@ export const Game: React.FC = () => {
                 <div className="flex items-center gap-3">
                   <img src={user.photoURL || ''} alt="" className="w-10 h-10 rounded-full border border-slate-600" />
                   <div className="text-left">
-                    <p className="text-xs text-slate-500 uppercase font-bold">Logged In As</p>
-                    <p className="font-medium">{user.displayName}</p>
+                    <p className="text-s text-white uppercase font-bold">{user.displayName}</p>
                   </div>
                 </div>
-                <button onClick={logout} className="text-xs text-slate-500 hover:text-red-400 font-bold uppercase">Logout</button>
+                <button onClick={logout}>
+                  <LogOut size={30} className="text-slate-500 hover:text-red-400" />
+                </button>
               </div>
             ) : (
               <button 
                 onClick={login}
-                className="w-full flex items-center justify-center gap-3 p-4 bg-white text-black rounded-xl font-bold hover:bg-slate-200 transition-all"
+                className="w-full flex items-center justify-center gap-3 p-4 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-600 transition-all"
               >
                 <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="" />
                 Sign in with Google
@@ -301,22 +306,20 @@ export const Game: React.FC = () => {
             )}
             
             <div className="flex items-center gap-3 p-4 bg-slate-800 rounded-xl border border-slate-700">
-              <User size={20} className="text-blue-400" />
+              <User size={40} className="text-blue-400" />
               <div className="text-left flex-1">
-                <p className="text-xs text-slate-500 uppercase font-bold">Game Mode</p>
-                <p className="font-medium">{user ? 'Multiplayer Enabled' : 'Local Multiplayer'}</p>
+                <p className="text-s text-slate-500 uppercase font-bold">Game Mode</p>
+                <p className="font-medium text-white">{user ? 'Multiplayer Enabled' : 'Local Singleplayer'}</p>
               </div>
             </div>
 
             <div className="p-4 bg-slate-800 rounded-xl border border-slate-700">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-slate-700 rounded-lg flex items-center justify-center">
-                    <User size={16} className="text-slate-400" />
-                  </div>
+                  <Bot size={40} className="text-blue-400" />
                   <div className="text-left">
-                    <p className="text-xs text-slate-500 uppercase font-bold">AI Opponents</p>
-                    <p className="font-medium">{aiCount} Players</p>
+                    <p className="text-s text-slate-500 uppercase font-bold">AI Opponents</p>
+                    <p className="font-medium text-white">{aiCount} AI Players</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -324,13 +327,13 @@ export const Game: React.FC = () => {
                     onClick={() => setAiCount(Math.max(1, aiCount - 1))}
                     className="w-8 h-8 flex items-center justify-center bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
                   >
-                    -
+                    <Minus size={15} className="text-white" />
                   </button>
                   <button 
                     onClick={() => setAiCount(Math.min(5, aiCount + 1))}
                     className="w-8 h-8 flex items-center justify-center bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
                   >
-                    +
+                    <Plus size={15} className="text-white" />
                   </button>
                 </div>
               </div>
@@ -347,9 +350,9 @@ export const Game: React.FC = () => {
 
           <button 
             onClick={startGame}
-            className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-bold text-lg transition-all shadow-lg shadow-blue-900/20 active:scale-95"
+            className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-bold text-lg text-white transition-all shadow-lg shadow-blue-900/20 active:scale-95"
           >
-            Start Prototype
+            Start Singleplayer
           </button>
         </motion.div>
       </div>
