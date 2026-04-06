@@ -9,7 +9,7 @@ import { canCapture, getTerritories, processTurn, getMergedUnit, calculateUpkeep
 import { 
   Coins, 
   User, 
-  Sword, 
+  Swords, 
   Shield, 
   Crown, 
   Castle, 
@@ -266,6 +266,42 @@ export const Game: React.FC = () => {
 
   const currentPlayer = state?.players[state.currentTurn];
 
+  const territoriesWithActions = useMemo(() => {
+    if (!state || !currentPlayer) return new Set<string>();
+    const active = new Set<string>();
+    
+    // Only calculate for the current player's turn
+    if (user && currentPlayer.id !== user.uid) return active;
+
+    const territories = getTerritories(state.map, currentPlayer.id);
+    for (const territory of territories) {
+      const capitalKey = territory.find(key => state.map[key].isCapital);
+      if (!capitalKey) continue;
+      
+      const capital = state.map[capitalKey];
+      let hasAction = false;
+
+      // Check if territory can afford the cheapest unit (Peasant costs 10)
+      if ((capital.gold || 0) >= 10) {
+        hasAction = true;
+      } else {
+        // Check if any unit in the territory hasn't moved
+        for (const key of territory) {
+          const hex = state.map[key];
+          if (hex.unit && hex.unit !== 'Town' && hex.unit !== 'Tower' && !hex.hasMoved) {
+            hasAction = true;
+            break;
+          }
+        }
+      }
+
+      if (hasAction) {
+        active.add(capitalKey);
+      }
+    }
+    return active;
+  }, [state, currentPlayer, user]);
+
   if (isLobby) {
     return (
       <div className="h-screen flex items-center justify-center bg-slate-950 p-6">
@@ -275,7 +311,7 @@ export const Game: React.FC = () => {
           className="max-w-md w-full bg-slate-900 p-8 rounded-3xl border border-slate-800 shadow-2xl text-center"
         >
           <div className="w-20 h-20 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-blue-900/20">
-            <Sword size={70} className="text-white" />
+            <Swords size={70} className="text-white" />
           </div>
           <h1 className="text-3xl font-black text-white mb-4">Meiyo</h1>
           <p className="text-slate-200 mb-8 leading-relaxed">
@@ -492,42 +528,6 @@ export const Game: React.FC = () => {
     setHighlightedHexes(new Set());
   };
 
-  const territoriesWithActions = useMemo(() => {
-    if (!state || !currentPlayer) return new Set<string>();
-    const active = new Set<string>();
-    
-    // Only calculate for the current player's turn
-    if (user && currentPlayer.id !== user.uid) return active;
-
-    const territories = getTerritories(state.map, currentPlayer.id);
-    for (const territory of territories) {
-      const capitalKey = territory.find(key => state.map[key].isCapital);
-      if (!capitalKey) continue;
-      
-      const capital = state.map[capitalKey];
-      let hasAction = false;
-
-      // Check if territory can afford the cheapest unit (Peasant costs 10)
-      if ((capital.gold || 0) >= 10) {
-        hasAction = true;
-      } else {
-        // Check if any unit in the territory hasn't moved
-        for (const key of territory) {
-          const hex = state.map[key];
-          if (hex.unit && hex.unit !== 'Town' && hex.unit !== 'Tower' && !hex.hasMoved) {
-            hasAction = true;
-            break;
-          }
-        }
-      }
-
-      if (hasAction) {
-        active.add(capitalKey);
-      }
-    }
-    return active;
-  }, [state, currentPlayer, user]);
-
   if (!state || !currentPlayer) return <div>Loading...</div>;
 
   return (
@@ -657,7 +657,7 @@ export const Game: React.FC = () => {
               </button>
               <div className="absolute bottom-full right-0 mb-4 w-80 bg-slate-900/95 backdrop-blur-md border border-slate-700 p-6 rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                 <h3 className="font-bold text-white mb-3 flex items-center gap-2">
-                  <Sword size={16} className="text-blue-400" />
+                  <Swords size={16} className="text-blue-400" />
                   How to Play
                 </h3>
                 <ul className="text-sm text-slate-300 space-y-2 list-disc pl-4">
