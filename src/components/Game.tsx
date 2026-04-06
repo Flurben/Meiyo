@@ -319,6 +319,11 @@ export const Game: React.FC = () => {
           </p>
           
           <div className="space-y-4 mb-8">
+            {!window.isSecureContext && !user && (
+              <div className="p-3 bg-red-900/50 border border-red-700 rounded-xl text-sm text-red-200 text-left mb-4">
+                <strong>Warning:</strong> Your connection is not secure (HTTP). Google Sign-in requires a secure HTTPS connection or localhost to work. The sign-in popup will likely close automatically.
+              </div>
+            )}
             {user ? (
               <div className="flex items-center justify-between p-4 bg-slate-800 rounded-xl border border-slate-700">
                 <div className="flex items-center gap-3">
@@ -610,21 +615,21 @@ export const Game: React.FC = () => {
                 onMouseEnter={() => setIsSurrenderHovered(true)}
                 onMouseLeave={() => setIsSurrenderHovered(false)}
                 onClick={() => setShowSurrenderConfirm(!showSurrenderConfirm)}
-                className="h-[46px] bg-slate-900/90 backdrop-blur-md border border-slate-700 rounded-xl hover:bg-slate-800 transition-colors shadow-2xl text-slate-400 hover:text-white flex items-center justify-center overflow-hidden"
+                className="h-[46px] bg-slate-900/90 backdrop-blur-md border border-slate-700 rounded-xl hover:bg-slate-800 transition-colors shadow-2xl text-slate-400 hover:text-white flex items-center overflow-hidden"
                 animate={{ width: isSurrenderHovered || showSurrenderConfirm ? 140 : 46 }}
                 transition={{ type: "spring", stiffness: 300, damping: 25 }}
               >
-                <div className="flex items-center gap-2 whitespace-nowrap px-3">
-                  <Flag size={20} className="shrink-0" />
-                  <motion.span 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: isSurrenderHovered || showSurrenderConfirm ? 1 : 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="font-medium"
-                  >
-                    Surrender?
-                  </motion.span>
+                <div className="w-[46px] flex items-center justify-center shrink-0">
+                  <Flag size={20} />
                 </div>
+                <motion.span 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: isSurrenderHovered || showSurrenderConfirm ? 1 : 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="font-medium whitespace-nowrap pr-4"
+                >
+                  Surrender?
+                </motion.span>
               </motion.button>
               
               {showSurrenderConfirm && (
@@ -637,6 +642,7 @@ export const Game: React.FC = () => {
                     onClick={() => {
                       setShowSurrenderConfirm(false);
                       setState(null);
+                      setIsLobby(true);
                     }}
                     className="w-full py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg font-bold shadow-lg transition-colors"
                   >
