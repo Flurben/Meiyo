@@ -5,7 +5,7 @@ import { GameState, HexData, Player, UnitType, UNIT_STATS } from '../game/types'
 import { HexGrid } from './HexGrid';
 import { generateRandomMap } from '../game/mapGenerator';
 import { axialToKey, getNeighbors, keyToAxial } from '../game/hex';
-import { canCapture, getTerritories, processTurn, getMergedUnit, calculateUpkeep, checkWinner, getReachableHexes } from '../game/engine';
+import { canCapture, getTerritories, processTurn, getMergedUnit, calculateUpkeep, calculateIncome, checkWinner, getReachableHexes, updateTerritories } from '../game/engine';
 import { 
   Coins, 
   User, 
@@ -15,14 +15,16 @@ import {
   Castle, 
   ChevronRight, 
   RotateCcw,
-  Trophy
+  Trophy,
+  HelpCircle,
+  Flag
 } from 'lucide-react';
 import _ from 'lodash';
 
 const INITIAL_PLAYERS: Player[] = [
-  { id: '1', name: 'Player 1', color: '#ef4444', gold: 10 },
-  { id: '2', name: 'Player 2', color: '#3b82f6', gold: 10 },
-  { id: '3', name: 'Player 3', color: '#10b981', gold: 10 },
+  { id: '1', name: 'Player 1', color: '#ef4444' },
+  { id: '2', name: 'Player 2', color: '#3b82f6' },
+  { id: '3', name: 'Player 3', color: '#10b981' },
 ];
 
 import { useAuth } from '../AuthProvider';
@@ -44,7 +46,7 @@ export const Game: React.FC = () => {
   const { user, loading: authLoading, isAuthReady } = useAuth();
   const [state, setState] = useState<GameState | null>(null);
   const [selectedHex, setSelectedHex] = useState<string | null>(null);
-  const [selectedUnitType, setSelectedUnitType] = useState<UnitType | null>(null);
+  const [radialMenu, setRadialMenu] = useState<{ x: number, y: number, hexKey: string } | null>(null);
   const [highlightedHexes, setHighlightedHexes] = useState<Set<string>>(new Set());
   const [winner, setWinner] = useState<string | null>(null);
   const [isLobby, setIsLobby] = useState(true);
@@ -52,6 +54,8 @@ export const Game: React.FC = () => {
   const [hoveredTerritory, setHoveredTerritory] = useState<Set<string>>(new Set());
   const [gameId, setGameId] = useState<string | null>(null);
   const [isAIProcessing, setIsAIProcessing] = useState(false);
+  const [showSurrenderConfirm, setShowSurrenderConfirm] = useState(false);
+  const [isSurrenderHovered, setIsSurrenderHovered] = useState(false);
   const stateRef = useRef(state);
 
   useEffect(() => {
@@ -69,11 +73,19 @@ export const Game: React.FC = () => {
           const remoteTurnId = data.players[data.currentTurn].id;
           const localTurnId = stateRef.current?.players[stateRef.current?.currentTurn]?.id;
           
+          const isHost = user?.uid === data.players[0].id;
+          const isAITurn = data.players[data.currentTurn].isAI;
+          
           // Update local state if:
-          // 1. It's not our turn (we should follow remote state)
+          // 1. It's not our turn AND (it's not an AI turn OR we are not the host)
           // 2. It just became our turn (AI finished its turn)
           // 3. We are in the lobby or game just started
-          if (remoteTurnId !== user?.uid || (remoteTurnId === user?.uid && localTurnId !== user?.uid) || !stateRef.current) {
+          const shouldUpdate = 
+            (remoteTurnId !== user?.uid && !(isAITurn && isHost)) || 
+            (remoteTurnId === user?.uid && localTurnId !== user?.uid) || 
+            !stateRef.current;
+
+          if (shouldUpdate) {
             setState(data);
             stateRef.current = data;
           }
@@ -178,8 +190,7 @@ export const Game: React.FC = () => {
     initialPlayers.push({
       id: user?.uid || '1',
       name: user?.displayName || 'Player 1',
-      color: colors[0],
-      gold: 20
+      color: colors[0]
     });
 
     // Add AI players
@@ -188,7 +199,6 @@ export const Game: React.FC = () => {
         id: `ai-${i + 1}`,
         name: `AI Player ${i + 1}`,
         color: colors[(i + 1) % colors.length],
-        gold: 20,
         isAI: true
       });
     }
@@ -263,8 +273,8 @@ export const Game: React.FC = () => {
           <div className="w-20 h-20 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-blue-900/20">
             <Sword size={40} className="text-white" />
           </div>
-          <h1 className="text-3xl font-black mb-4">Slay Multiplayer</h1>
-          <p className="text-slate-400 mb-8 leading-relaxed">
+          <h1 className="text-3xl font-black text-white mb-4">Meiyo</h1>
+          <p className="text-slate-200 mb-8 leading-relaxed">
             Conquer the land, manage your economy, and outsmart your opponents in this hexagonal strategy game.
           </p>
           
@@ -348,33 +358,52 @@ export const Game: React.FC = () => {
 
   if (!state || !currentPlayer) return <div>Loading...</div>;
 
+  const handleHexRightClick = (key: string, e: React.MouseEvent) => {
+    if (!state || !currentPlayer || isAIProcessing) return;
+    if (user && currentPlayer.id !== user.uid) return;
+
+    const hex = state.map[key];
+    if (hex && hex.ownerId === currentPlayer.id && !hex.unit) {
+      setRadialMenu({ x: e.clientX, y: e.clientY, hexKey: key });
+    } else {
+      setRadialMenu(null);
+    }
+  };
+
+  const buyUnit = (unitType: UnitType, hexKey: string) => {
+    if (!state || !currentPlayer) return;
+    
+    const hex = state.map[hexKey];
+    if (!hex || hex.ownerId !== currentPlayer.id || hex.unit) return;
+
+    const territories = getTerritories(state.map, currentPlayer.id);
+    const territory = territories.find(t => t.includes(hexKey));
+    if (!territory) return;
+
+    const capitalKey = territory.find(k => state.map[k].isCapital);
+    if (!capitalKey) return;
+
+    const capital = state.map[capitalKey];
+    const cost = UNIT_STATS[unitType as keyof typeof UNIT_STATS]?.cost || 0;
+
+    if ((capital.gold || 0) >= cost) {
+      let newState = _.cloneDeep(state);
+      newState.map[hexKey].unit = unitType;
+      newState.map[capitalKey].gold = (capital.gold || 0) - cost;
+      newState = updateTerritories(newState, state);
+      updateGameState(newState);
+      stateRef.current = newState;
+    }
+    setRadialMenu(null);
+  };
+
   const handleHexClick = (key: string) => {
+    setRadialMenu(null);
     if (!state || !currentPlayer || isAIProcessing) return;
     if (user && currentPlayer.id !== user.uid) return;
 
     const hex = state.map[key];
     if (!hex) return;
-
-    // If a unit is selected for placement
-    if (selectedUnitType) {
-      // Check if clicking on own empty hex
-      if (hex.ownerId === currentPlayer.id && !hex.unit) {
-        const cost = UNIT_STATS[selectedUnitType as keyof typeof UNIT_STATS]?.cost || 0;
-        if (currentPlayer.gold >= cost) {
-          const newState = _.cloneDeep(state);
-          newState.map[key].unit = selectedUnitType;
-          // Recruited units retain their action
-          newState.players[state.currentTurn].gold -= cost;
-          updateGameState(newState);
-          stateRef.current = newState;
-          setSelectedUnitType(null);
-          return;
-        }
-      }
-      // If clicking elsewhere, deselect unit
-      setSelectedUnitType(null);
-      return;
-    }
 
     // If a unit is already selected for movement
     if (selectedHex) {
@@ -403,12 +432,13 @@ export const Game: React.FC = () => {
             // Move or Capture (including cutting trees)
             const isEnemyTerritory = targetHex.ownerId !== currentPlayer.id;
             const wasTown = targetHex.unit === 'Town';
+            const wasTree = targetHex.unit === 'Tree';
             
             newState.map[key].ownerId = currentPlayer.id;
             newState.map[key].unit = attackerHex.unit;
             
-            // Only lose action if moving into enemy territory
-            if (isEnemyTerritory) {
+            // Lose action if moving into enemy territory or chopping a tree
+            if (isEnemyTerritory || wasTree) {
               newState.map[key].hasMoved = true;
             }
 
@@ -419,8 +449,9 @@ export const Game: React.FC = () => {
 
             newState.map[selectedHex].unit = null;
           }
-          updateGameState(newState);
-          stateRef.current = newState;
+          const finalState = updateTerritories(newState, state);
+          updateGameState(finalState);
+          stateRef.current = finalState;
         }
       }
       setSelectedHex(null);
@@ -455,19 +486,279 @@ export const Game: React.FC = () => {
     
     await updateGameState(newState);
     setSelectedHex(null);
-    setSelectedUnitType(null);
     setHighlightedHexes(new Set());
   };
+
+  const territoriesWithActions = useMemo(() => {
+    if (!state || !currentPlayer) return new Set<string>();
+    const active = new Set<string>();
+    
+    // Only calculate for the current player's turn
+    if (user && currentPlayer.id !== user.uid) return active;
+
+    const territories = getTerritories(state.map, currentPlayer.id);
+    for (const territory of territories) {
+      const capitalKey = territory.find(key => state.map[key].isCapital);
+      if (!capitalKey) continue;
+      
+      const capital = state.map[capitalKey];
+      let hasAction = false;
+
+      // Check if territory can afford the cheapest unit (Peasant costs 10)
+      if ((capital.gold || 0) >= 10) {
+        hasAction = true;
+      } else {
+        // Check if any unit in the territory hasn't moved
+        for (const key of territory) {
+          const hex = state.map[key];
+          if (hex.unit && hex.unit !== 'Town' && hex.unit !== 'Tower' && !hex.hasMoved) {
+            hasAction = true;
+            break;
+          }
+        }
+      }
+
+      if (hasAction) {
+        active.add(capitalKey);
+      }
+    }
+    return active;
+  }, [state, currentPlayer, user]);
 
   if (!state || !currentPlayer) return <div>Loading...</div>;
 
   return (
-    <div className="flex h-screen bg-slate-950 text-white overflow-hidden">
+    <div className="flex h-screen bg-[#0f172a] text-white overflow-hidden" style={{ 
+      backgroundImage: `url("data:image/svg+xml,%3Csvg width='100' height='20' viewBox='0 0 100 20' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M21.184 20c.302-1.364.873-2.73 1.72-4.012 1.166-1.766 2.673-3.02 4.26-3.9 1.495-.828 3.114-1.366 4.79-1.666 2.05-.366 4.078-.366 6.128 0 1.676.3 3.295.838 4.79 1.666 1.587.88 3.094 2.134 4.26 3.9.847 1.282 1.418 2.648 1.72 4.012h1.496c-.28-1.46-.86-2.894-1.715-4.186-1.22-1.846-2.802-3.16-4.466-4.082-1.56-.866-3.245-1.428-4.99-1.74-2.13-.38-4.24-.38-6.37 0-1.745.312-3.43.874-4.99 1.74-1.664.922-3.246 2.236-4.466 4.082-.855 1.292-1.435 2.726-1.715 4.186h1.496z' fill='%231e3a8a' fill-opacity='0.4' fill-rule='evenodd'/%3E%3C/svg%3E")`,
+      backgroundSize: '100px 20px'
+    }}>
       <div className="flex-1 relative">
+        <HexGrid 
+          map={state.map} 
+          players={state.players}
+          onHexClick={handleHexClick}
+          onHexRightClick={handleHexRightClick}
+          selectedHex={selectedHex || undefined}
+          highlightedHexes={highlightedHexes}
+          hoveredTerritory={hoveredTerritory}
+          territoriesWithActions={territoriesWithActions}
+          onHexHover={handleHexHover}
+        />
+        {/* Dynamic View Window */}
+        {hoveredTerritory.size > 0 && (
+          <div className="absolute top-4 right-4 z-40 w-64 bg-slate-900/90 backdrop-blur-md border border-slate-700 p-4 rounded-xl shadow-2xl pointer-events-none">
+            {(() => {
+              const territoryArray = Array.from(hoveredTerritory) as string[];
+              const firstHex = state.map[territoryArray[0]];
+              const owner = state.players.find(p => p.id === firstHex.ownerId);
+              const capitalKey = territoryArray.find(k => state.map[k].isCapital);
+              const capital = capitalKey ? state.map[capitalKey] : null;
+              const gold = capital?.gold || 0;
+              const income = calculateIncome(territoryArray, state.map);
+              const upkeep = calculateUpkeep(territoryArray, state.map);
+              const net = income - upkeep;
+              const isNegative = net < 0;
+
+              return (
+                <>
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: owner?.color }} />
+                    <span className="font-bold text-slate-200">{owner?.name || 'Unknown'}</span>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4 mb-3">
+                    <div>
+                      <div className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1">Treasury</div>
+                      <div className="flex items-center gap-1 text-yellow-400 font-mono">
+                        <Coins size={14} />
+                        <span>{gold}</span>
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1">Size</div>
+                      <div className="text-slate-300 font-mono">{hoveredTerritory.size} hexes</div>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-slate-700/50 pt-3">
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Net Income</span>
+                      <span className={`font-mono font-bold ${isNegative ? 'text-red-400' : 'text-green-400'}`}>
+                        {isNegative ? '' : '+'}{net}/turn
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                      <span>+{income} in</span>
+                      <span>-{upkeep} out</span>
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* Bottom Right Controls */}
+        <div className="absolute bottom-6 right-6 z-40 flex items-center gap-4">
+          {/* Toolbar */}
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <motion.button 
+                onMouseEnter={() => setIsSurrenderHovered(true)}
+                onMouseLeave={() => setIsSurrenderHovered(false)}
+                onClick={() => setShowSurrenderConfirm(!showSurrenderConfirm)}
+                className="h-[46px] bg-slate-900/90 backdrop-blur-md border border-slate-700 rounded-xl hover:bg-slate-800 transition-colors shadow-2xl text-slate-400 hover:text-white flex items-center justify-center overflow-hidden"
+                animate={{ width: isSurrenderHovered || showSurrenderConfirm ? 140 : 46 }}
+                transition={{ type: "spring", stiffness: 300, damping: 25 }}
+              >
+                <div className="flex items-center gap-2 whitespace-nowrap px-3">
+                  <Flag size={20} className="shrink-0" />
+                  <motion.span 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: isSurrenderHovered || showSurrenderConfirm ? 1 : 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="font-medium"
+                  >
+                    Surrender?
+                  </motion.span>
+                </div>
+              </motion.button>
+              
+              {showSurrenderConfirm && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  className="absolute bottom-full right-0 mb-2 flex flex-col gap-2 w-full"
+                >
+                  <button 
+                    onClick={() => {
+                      setShowSurrenderConfirm(false);
+                      setState(null);
+                    }}
+                    className="w-full py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg font-bold shadow-lg transition-colors"
+                  >
+                    Yes
+                  </button>
+                  <button 
+                    onClick={() => setShowSurrenderConfirm(false)}
+                    className="w-full py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-bold shadow-lg transition-colors"
+                  >
+                    No
+                  </button>
+                </motion.div>
+              )}
+            </div>
+            <div className="relative group">
+              <button className="p-3 bg-slate-900/90 backdrop-blur-md border border-slate-700 rounded-xl hover:bg-slate-800 transition-colors shadow-2xl text-slate-400 hover:text-white">
+                <HelpCircle size={20} />
+              </button>
+              <div className="absolute bottom-full right-0 mb-4 w-80 bg-slate-900/95 backdrop-blur-md border border-slate-700 p-6 rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                <h3 className="font-bold text-white mb-3 flex items-center gap-2">
+                  <Sword size={16} className="text-blue-400" />
+                  How to Play
+                </h3>
+                <ul className="text-sm text-slate-300 space-y-2 list-disc pl-4">
+                  <li>Expand territory to increase income.</li>
+                  <li>Right-click your empty hexes to buy Peasants or Towers.</li>
+                  <li>Merge units to upgrade them.</li>
+                  <li>Higher tier units can capture better defended hexes.</li>
+                  <li>Towers defend your territory.</li>
+                  <li>If upkeep exceeds gold, your units will starve and turn into graves!</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          {/* Current Turn Indicator */}
+          <div className="bg-slate-900/90 backdrop-blur-md border border-slate-700 px-6 py-3 rounded-xl shadow-2xl flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-4 h-4 rounded-full" style={{ backgroundColor: currentPlayer.color }} />
+              <span className="font-bold text-slate-200">{currentPlayer.name}'s Turn</span>
+              {isAIProcessing && (
+                <motion.div 
+                  animate={{ rotate: 360 }}
+                  transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                >
+                  <RotateCcw size={16} className="text-blue-400" />
+                </motion.div>
+              )}
+            </div>
+          </div>
+          
+          {/* End Turn Button */}
+          <button
+            onClick={nextTurn}
+            disabled={isAIProcessing || (user && currentPlayer.id !== user.uid)}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 px-8 py-4 rounded-xl font-bold transition-colors shadow-2xl"
+          >
+            {isAIProcessing ? 'AI Thinking...' : 'End Turn'}
+            <ChevronRight size={20} />
+          </button>
+        </div>
+
+        {/* Radial Menu */}
+        {radialMenu && (
+          <div 
+            className="fixed z-50 pointer-events-none"
+            style={{ left: radialMenu.x, top: radialMenu.y }}
+          >
+            <div className="relative pointer-events-auto">
+              {/* Close background clicker */}
+              <div 
+                className="fixed inset-0" 
+                onClick={() => setRadialMenu(null)}
+                onContextMenu={(e) => { e.preventDefault(); setRadialMenu(null); }}
+              />
+              
+              <div className="absolute -translate-x-1/2 -translate-y-1/2">
+                <div className="relative w-48 h-48">
+                  {(['Peasant', 'Tower'] as UnitType[]).map((type, i) => {
+                    const angle = (i * Math.PI) - Math.PI / 2; // Top and Bottom
+                    const radius = 60;
+                    const x = Math.cos(angle) * radius;
+                    const y = Math.sin(angle) * radius;
+                    const stats = UNIT_STATS[type as keyof typeof UNIT_STATS];
+                    
+                    // Check if can afford
+                    const territory = getTerritories(state.map, currentPlayer.id).find(t => t.includes(radialMenu.hexKey));
+                    const capitalKey = territory?.find(k => state.map[k].isCapital);
+                    const gold = capitalKey ? (state.map[capitalKey].gold || 0) : 0;
+                    const canAfford = gold >= stats.cost;
+
+                    return (
+                      <motion.button
+                        key={type}
+                        initial={{ scale: 0, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        disabled={!canAfford}
+                        onClick={() => buyUnit(type, radialMenu.hexKey)}
+                        className={`absolute w-16 h-16 -ml-8 -mt-8 rounded-full flex flex-col items-center justify-center gap-1 shadow-xl border-2 transition-transform hover:scale-110 ${
+                          canAfford 
+                            ? 'bg-slate-800 border-blue-500 text-slate-200 hover:bg-slate-700' 
+                            : 'bg-slate-900 border-slate-700 text-slate-500 opacity-50 cursor-not-allowed'
+                        }`}
+                        style={{ left: '50%', top: '50%', x, y }}
+                      >
+                        {type === 'Peasant' && <User size={20} />}
+                        {type === 'Tower' && <Castle size={20} />}
+                        <div className="flex items-center gap-1 text-[10px] font-mono font-bold text-yellow-400">
+                          <Coins size={10} />
+                          {stats.cost}
+                        </div>
+                      </motion.button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <HexGrid 
           map={state.map} 
           players={state.players} 
           onHexClick={handleHexClick} 
+          onHexRightClick={handleHexRightClick}
           selectedHex={selectedHex || undefined}
           highlightedHexes={highlightedHexes}
           hoveredTerritory={hoveredTerritory}
@@ -495,101 +786,6 @@ export const Game: React.FC = () => {
             </motion.div>
           </div>
         )}
-      </div>
-
-      <div className="w-80 bg-slate-900 border-l border-slate-800 p-6 flex flex-col gap-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold">Slay Clone</h2>
-          <button onClick={() => window.location.reload()} className="p-2 hover:bg-slate-800 rounded-full">
-            <RotateCcw size={20} />
-          </button>
-        </div>
-
-        <div className="p-4 rounded-xl bg-slate-800 border border-slate-700">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-4 h-4 rounded-full" style={{ backgroundColor: currentPlayer.color }} />
-            <span className="font-semibold">{currentPlayer.name}'s Turn</span>
-            {isAIProcessing && (
-              <motion.div 
-                animate={{ rotate: 360 }}
-                transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
-                className="ml-auto"
-              >
-                <RotateCcw size={16} className="text-blue-400" />
-              </motion.div>
-            )}
-          </div>
-          <div className="flex items-center gap-2 text-yellow-400 font-mono text-lg mb-2">
-            <Coins size={20} />
-            <span>{currentPlayer.gold} Gold</span>
-          </div>
-          
-          {/* Territory Stats */}
-          <div className="text-xs text-slate-400 space-y-1 border-t border-slate-700 pt-2">
-            {getTerritories(state.map, currentPlayer.id).map((t, i) => (
-              <div key={i} className="flex justify-between">
-                <span>Territory {i + 1} ({t.length} hexes)</span>
-                <span className="text-green-400">+{t.length - calculateUpkeep(t, state.map)}/turn</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-3">
-          <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Buy Units</h3>
-          {(['Peasant', 'Spearman', 'Knight', 'Baron', 'Tower'] as UnitType[]).map(type => {
-            const stats = UNIT_STATS[type as keyof typeof UNIT_STATS];
-            const canAfford = currentPlayer.gold >= stats.cost;
-            const isUserTurn = !user || currentPlayer.id === user.uid;
-            const isDisabled = !canAfford || isAIProcessing || !isUserTurn;
-
-            return (
-              <button
-                key={type}
-                disabled={isDisabled}
-                onClick={() => setSelectedUnitType(selectedUnitType === type ? null : type)}
-                className={`flex items-center justify-between p-3 rounded-lg border transition-all ${
-                  selectedUnitType === type 
-                    ? 'bg-blue-600 border-blue-400' 
-                    : 'bg-slate-800 border-slate-700 hover:border-slate-500'
-                } ${isDisabled && 'opacity-50 cursor-not-allowed'}`}
-              >
-                <div className="flex items-center gap-3">
-                  {type === 'Peasant' && <User size={18} />}
-                  {type === 'Spearman' && <Sword size={18} />}
-                  {type === 'Knight' && <Shield size={18} />}
-                  {type === 'Baron' && <Crown size={18} />}
-                  {type === 'Tower' && <Castle size={18} />}
-                  <span className="font-medium">{type}</span>
-                </div>
-                <div className="flex items-center gap-1 text-yellow-400 text-sm">
-                  <Coins size={14} />
-                  <span>{stats.cost}</span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="mt-4 p-4 bg-slate-800/50 rounded-xl border border-slate-700/50 text-xs text-slate-400 space-y-2">
-          <h4 className="font-bold text-slate-300 uppercase tracking-tighter">Rules</h4>
-          <ul className="list-disc pl-4 space-y-1">
-            <li>Each hex provides 1 Gold income.</li>
-            <li>Units have upkeep costs. Don't go bankrupt!</li>
-            <li>Higher level units capture lower level ones.</li>
-            <li>Towers protect adjacent hexes from level 1-2 units.</li>
-            <li>Merge units by moving one onto another.</li>
-          </ul>
-        </div>
-
-        <button
-          onClick={nextTurn}
-          disabled={isAIProcessing || (user && currentPlayer.id !== user.uid)}
-          className="mt-auto flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 py-4 rounded-xl font-bold transition-colors"
-        >
-          {isAIProcessing ? 'AI Thinking...' : 'End Turn'}
-          <ChevronRight size={20} />
-        </button>
       </div>
     </div>
   );

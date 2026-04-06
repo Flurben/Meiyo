@@ -70,6 +70,7 @@ export function canCapture(attackerLevel: number, targetKey: string, map: Record
     const neighborHex = map[neighborKey];
     if (neighborHex?.ownerId === targetHex.ownerId) {
       if (neighborHex.unit === 'Tower') maxDefense = Math.max(maxDefense, 2);
+      if (neighborHex.unit === 'Town') maxDefense = Math.max(maxDefense, 1);
       if (neighborHex.unit && UNIT_STATS[neighborHex.unit as keyof typeof UNIT_STATS]) {
         maxDefense = Math.max(maxDefense, UNIT_STATS[neighborHex.unit as keyof typeof UNIT_STATS].level);
       }
@@ -90,23 +91,88 @@ export function getMergedUnit(unitA: UnitType, unitB: UnitType): UnitType | null
   return null;
 }
 
-export function updateTerritories(state: GameState): GameState {
+export function updateTerritories(state: GameState, oldState?: GameState): GameState {
   const newState = _.cloneDeep(state);
   
   // For each player, find their territories
   newState.players.forEach(player => {
-    const territories = getTerritories(newState.map, player.id);
-    
-    territories.forEach(territory => {
+    const newTerritories = getTerritories(newState.map, player.id);
+    const oldTerritories = oldState ? getTerritories(oldState.map, player.id) : [];
+
+    // Map old territories to their gold
+    const oldTerritoryData = oldTerritories.map(territory => {
+      let gold = 0;
+      territory.forEach(key => {
+        if (oldState!.map[key].isCapital) {
+          gold += oldState!.map[key].gold || 0;
+        }
+      });
+      return { hexes: territory, gold };
+    });
+
+    // Prepare new territories with assigned gold
+    const newTerritoryData = newTerritories.map(territory => ({
+      hexes: territory,
+      assignedGold: 0,
+      hasTown: territory.some(key => newState.map[key].unit === 'Town')
+    }));
+
+    if (oldState) {
+      // Distribute gold
+      oldTerritoryData.forEach(oldT => {
+        if (oldT.gold <= 0) return;
+
+        // Find intersecting new territories
+        const intersecting = newTerritoryData.filter(newT => 
+          newT.hexes.some(key => oldT.hexes.includes(key))
+        );
+
+        if (intersecting.length === 1) {
+          intersecting[0].assignedGold += oldT.gold;
+        } else if (intersecting.length > 1) {
+          const totalHexes = intersecting.reduce((sum, t) => sum + t.hexes.length, 0);
+          let remainingGold = oldT.gold;
+          
+          // Sort by size ascending so the largest gets the remainder
+          const sorted = [...intersecting].sort((a, b) => a.hexes.length - b.hexes.length);
+          
+          sorted.forEach((t, index) => {
+            if (index === sorted.length - 1) {
+              t.assignedGold += remainingGold;
+            } else {
+              const share = Math.floor(oldT.gold * (t.hexes.length / totalHexes));
+              t.assignedGold += share;
+              remainingGold -= share;
+            }
+          });
+        }
+      });
+    } else {
+      // Fallback if no oldState: just sum up existing gold in the new territory
+      newTerritoryData.forEach(newT => {
+        let gold = 0;
+        newT.hexes.forEach(key => {
+          if (newState.map[key].isCapital) {
+            gold += newState.map[key].gold || 0;
+          }
+        });
+        newT.assignedGold = gold;
+      });
+    }
+
+    // Now apply to newState
+    newTerritoryData.forEach(newT => {
+      const territory = newT.hexes;
+      
       // If a city is completely isolated (no surrounding friendly hexes), it disappears
       if (territory.length === 1) {
         const key = territory[0];
         if (newState.map[key].unit === 'Town') {
-          newState.map[key].unit = null;
+          newState.map[key].unit = 'Tree';
           newState.map[key].isCapital = false;
-          newState.map[key].ownerId = null;
-          return;
+          newState.map[key].gold = 0;
         }
+        return;
       }
 
       // Check if this territory has a Town
@@ -117,6 +183,7 @@ export function updateTerritories(state: GameState): GameState {
         }
         // Clear isCapital for all hexes initially to ensure no stray dots
         newState.map[key].isCapital = false;
+        newState.map[key].gold = 0;
       });
       
       // If no Town, assign one to a random hex in the territory
@@ -124,6 +191,7 @@ export function updateTerritories(state: GameState): GameState {
         const randomKey = territory[Math.floor(Math.random() * territory.length)];
         newState.map[randomKey].unit = 'Town';
         newState.map[randomKey].isCapital = true;
+        newState.map[randomKey].gold = newT.assignedGold > 0 ? newT.assignedGold : 15;
       } else if (townCount > 0) {
         // If multiple towns (e.g., from merging), keep only one
         let keptOne = false;
@@ -132,6 +200,7 @@ export function updateTerritories(state: GameState): GameState {
             if (!keptOne) {
               keptOne = true;
               newState.map[key].isCapital = true;
+              newState.map[key].gold = newT.assignedGold > 0 ? newT.assignedGold : 15;
             } else {
               newState.map[key].unit = null;
             }
@@ -167,13 +236,26 @@ export function processTurn(state: GameState, playerId: string): GameState {
     const income = calculateIncome(territory, newState.map);
     const upkeep = calculateUpkeep(territory, newState.map);
     
-    const player = newState.players.find(p => p.id === playerId);
-    if (player) {
-      player.gold += income - upkeep;
+    // Find the capital hex for this territory
+    const capitalKey = territory.find(key => newState.map[key].isCapital);
+    if (capitalKey) {
+      const capitalHex = newState.map[capitalKey];
+      capitalHex.gold = (capitalHex.gold || 0) + income - upkeep;
       
       // If bankrupt, units die
-      if (player.gold < 0) {
-        player.gold = 0;
+      if (capitalHex.gold < 0) {
+        capitalHex.gold = 0;
+        for (const key of territory) {
+          const hex = newState.map[key];
+          if (hex.unit && hex.unit !== 'Town' && hex.unit !== 'Tower') {
+            hex.unit = 'Grave';
+          }
+        }
+      }
+    } else {
+      // No capital (e.g., 1-hex territory)
+      const net = income - upkeep;
+      if (net < 0) {
         for (const key of territory) {
           const hex = newState.map[key];
           if (hex.unit && hex.unit !== 'Town' && hex.unit !== 'Tower') {

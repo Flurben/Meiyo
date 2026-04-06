@@ -5,7 +5,6 @@ export interface Player {
   id: string;
   name: string;
   color: string;
-  gold: number;
   isAI?: boolean;
 }
 
@@ -14,8 +13,9 @@ export interface HexData {
   r: number;
   ownerId: string | null;
   unit: UnitType | null;
-  isCapital?: boolean; // The "Town" in Slay
+  isCapital?: boolean;
   hasMoved?: boolean;
+  gold?: number;
 }
 
 export interface GameState {

@@ -1,7 +1,7 @@
 
 import { GameState, HexData, Player, UnitType, UNIT_STATS } from './types';
 import { axialToKey, getNeighbors, keyToAxial } from './hex';
-import { canCapture, getTerritories, getMergedUnit, getReachableHexes, calculateUpkeep, calculateIncome } from './engine';
+import { canCapture, getTerritories, getMergedUnit, getReachableHexes, calculateUpkeep, calculateIncome, updateTerritories } from './engine';
 import _ from 'lodash';
 
 export async function runAITurnAsync(
@@ -82,6 +82,7 @@ export async function runAITurnAsync(
         console.log(`AI moving unit from ${unitKey} to ${bestMove} (priority: ${bestMovePriority.toFixed(2)})`);
         const targetHex = newState.map[bestMove];
         let moved = false;
+        const prevState = _.cloneDeep(newState);
         
         if (targetHex.ownerId === playerId && targetHex.unit) {
           const merged = getMergedUnit(unitType, targetHex.unit as UnitType);
@@ -111,12 +112,17 @@ export async function runAITurnAsync(
         }
         
         if (moved) {
+          newState = updateTerritories(newState, prevState);
           await onStep(newState);
         }
       }
     }
     
     // 2. Recruitment Phase
+    const capitalKey = territory.find(k => newState.map[k].isCapital);
+    if (!capitalKey) continue;
+    const capital = newState.map[capitalKey];
+
     const emptyHexes = territory.filter(key => !newState.map[key].unit);
     if (emptyHexes.length > 0) {
       // Calculate borders
@@ -160,10 +166,11 @@ export async function runAITurnAsync(
       });
 
       for (const key of vulnerableBorders) {
-        if (player.gold >= 15 && !newState.map[key].unit) {
+        if ((capital.gold || 0) >= 15 && !newState.map[key].unit) {
+          const prevState = _.cloneDeep(newState);
           newState.map[key].unit = 'Tower';
-          // Towers can't move anyway, but we don't need to set hasMoved
-          player.gold -= 15;
+          capital.gold = (capital.gold || 0) - 15;
+          newState = updateTerritories(newState, prevState);
           await onStep(newState);
         }
       }
@@ -172,30 +179,22 @@ export async function runAITurnAsync(
       const currentIncome = calculateIncome(territory, newState.map);
       const netIncome = currentIncome - currentUpkeep;
 
-      // 2. Offensive Units
-      while (player.gold >= 10) {
+      // 2. Offensive Units (Peasants only)
+      while ((capital.gold || 0) >= 10) {
         // If we have very little gold and negative income, don't buy anything
-        if (netIncome < 0 && player.gold < 10) break; 
+        if (netIncome < 0 && (capital.gold || 0) < 10) break; 
         // If we have some gold but low income, be cautious but still allow buying a Peasant if we have no units
         const hasUnits = territory.some(key => {
           const u = newState.map[key].unit;
           return u && u !== 'Town' && u !== 'Tree' && u !== 'Grave';
         });
-        if (netIncome < 1 && player.gold < 15 && hasUnits) break;
+        if (netIncome < 1 && (capital.gold || 0) < 15 && hasUnits) break;
 
         const availableEmpty = territory.filter(key => !newState.map[key].unit);
         if (availableEmpty.length === 0) break;
 
-        let typeToBuy: UnitType = 'Peasant';
-        let cost = 10;
-
-        if (player.gold >= 40 && Math.random() > 0.7) {
-          typeToBuy = 'Knight';
-          cost = 30;
-        } else if (player.gold >= 25 && Math.random() > 0.5) {
-          typeToBuy = 'Spearman';
-          cost = 20;
-        }
+        const typeToBuy: UnitType = 'Peasant';
+        const cost = 10;
 
         // Find best spot for offensive unit (near enemy)
         let bestSpot = availableEmpty[0];
@@ -216,9 +215,10 @@ export async function runAITurnAsync(
         }
 
         console.log(`AI recruiting ${typeToBuy} at ${bestSpot} (cost: ${cost})`);
+        const prevState = _.cloneDeep(newState);
         newState.map[bestSpot].unit = typeToBuy;
-        // Recruited units retain their action
-        player.gold -= cost;
+        capital.gold = (capital.gold || 0) - cost;
+        newState = updateTerritories(newState, prevState);
         await onStep(newState);
       }
     }
