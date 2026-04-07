@@ -581,7 +581,8 @@ export const Game: React.FC = () => {
           <div className="w-20 h-20 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-blue-900/20">
             <Swords size={70} className="text-white" />
           </div>
-          <h1 className="text-3xl font-black text-white mb-4">Meiyo</h1>
+          <h1 className="text-3xl font-black text-white mb-1">Meiyo</h1>
+          <h1 className="text-1xl text-white mb-2">v0.15</h1>
           <p className="text-slate-200 mb-8 leading-relaxed">
             Conquer the land, manage your economy, and outsmart your opponents in this hexagonal strategy game.
           </p>
