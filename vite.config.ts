@@ -15,6 +15,16 @@ export default defineConfig(({mode}) => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    css: {
+      transformer: 'lightningcss',
+      lightningcss: {
+        targets: {
+          chrome: 87,
+          safari: 14,
+          firefox: 78,
+        },
+      },
+    },
     server: {
       // Allow your Cloudflare domain to bypass the host check
       allowedHosts: ['meiyo.flurben.lol'],

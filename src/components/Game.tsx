@@ -742,12 +742,12 @@ export const Game: React.FC = () => {
                     value={joinCodeInput}
                     onChange={(e) => setJoinCodeInput(e.target.value)}
                     maxLength={6}
-                    className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 !text-white placeholder:text-slate-500 font-mono text-center focus:outline-none focus:border-blue-500 text-lg py-4"
+                    className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 text-white placeholder:text-slate-500 font-mono text-center focus:outline-none focus:border-blue-500 text-lg py-4"
                   />
                   <button 
                     onClick={() => joinGame(joinCodeInput)}
                     disabled={joinCodeInput.length !== 6}
-                    className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 disabled:shadow-none px-8 rounded-xl font-bold text-lg text-white transition-all shadow-lg shadow-emerald-900/20 active:scale-95"
+                    className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 disabled:shadow-none px-8 rounded-xl font-bold text-lg text-white transition-all shadow-emerald-900/20 active:scale-95"
                   >
                     Join
                   </button>
