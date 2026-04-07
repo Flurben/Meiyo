@@ -650,6 +650,21 @@ export const Game: React.FC = () => {
             )}
           </div>
         </motion.div>
+        
+        <AuthModal 
+          isOpen={isAuthModalOpen} 
+          onClose={() => setIsAuthModalOpen(false)} 
+          initialMode={authModalMode} 
+        />
+        <StatsModal 
+          isOpen={isStatsModalOpen} 
+          onClose={() => setIsStatsModalOpen(false)} 
+        />
+        <LobbyBrowser
+          isOpen={isLobbyBrowserOpen}
+          onClose={() => setIsLobbyBrowserOpen(false)}
+          onJoinGame={joinGame}
+        />
       </div>
     );
   }
@@ -710,6 +725,49 @@ export const Game: React.FC = () => {
             </div>
           )}
         </motion.div>
+
+        <AuthModal 
+          isOpen={isAuthModalOpen} 
+          onClose={() => setIsAuthModalOpen(false)} 
+          initialMode={authModalMode} 
+        />
+        <StatsModal 
+          isOpen={isStatsModalOpen} 
+          onClose={() => setIsStatsModalOpen(false)} 
+        />
+        <div className="absolute top-6 right-6 z-50 flex items-center gap-4">
+          {user && userData && (
+            <div className="flex items-center gap-3 bg-slate-900/80 backdrop-blur-md border border-slate-700 p-2 pr-4 rounded-full shadow-xl">
+              <div className="w-10 h-10 rounded-full overflow-hidden bg-slate-800 border-2 border-slate-600">
+                {userData.photoURL ? (
+                  <img src={userData.photoURL} alt="Profile" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-slate-400 font-bold">
+                    {(userData.alias || user.displayName || 'U').substring(0, 2).toUpperCase()}
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-col">
+                <span className="text-sm font-bold text-white leading-tight">{userData.alias || 'Anonymous'}</span>
+                <span className="text-xs text-slate-400 leading-tight">Player</span>
+              </div>
+            </div>
+          )}
+          <button 
+            onClick={() => setIsStatsModalOpen(true)}
+            className="p-3 bg-slate-900/80 backdrop-blur-md border border-slate-700 rounded-full hover:bg-slate-800 transition-colors shadow-xl text-slate-400 hover:text-white"
+            title="Statistics"
+          >
+            <ChartNoAxesCombined size={20} />
+          </button>
+          <button 
+            onClick={() => auth.signOut()}
+            className="p-3 bg-slate-900/80 backdrop-blur-md border border-slate-700 rounded-full hover:bg-slate-800 transition-colors shadow-xl text-slate-400 hover:text-white"
+            title="Sign Out"
+          >
+            <LogOut size={20} />
+          </button>
+        </div>
       </div>
     );
   }
