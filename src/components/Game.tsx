@@ -21,7 +21,9 @@ import {
   Bot,
   LogOut,
   Plus,
-  Minus
+  Minus,
+  SquarePen,
+  ChartNoAxesCombined
 } from 'lucide-react';
 import _ from 'lodash';
 
@@ -41,25 +43,37 @@ import {
   collection, 
   addDoc, 
   serverTimestamp,
-  getDoc
+  getDoc,
+  updateDoc
 } from 'firebase/firestore';
 
 import { runAITurnAsync } from '../game/ai';
+import { AuthModal } from './AuthModal';
+import { StatsModal } from './StatsModal';
+import { LobbyBrowser } from './LobbyBrowser';
 
 export const Game: React.FC = () => {
-  const { user, loading: authLoading, isAuthReady } = useAuth();
+  const { user, userData, loading: authLoading, isAuthReady } = useAuth();
   const [state, setState] = useState<GameState | null>(null);
   const [selectedHex, setSelectedHex] = useState<string | null>(null);
   const [radialMenu, setRadialMenu] = useState<{ x: number, y: number, hexKey: string } | null>(null);
   const [highlightedHexes, setHighlightedHexes] = useState<Set<string>>(new Set());
   const [winner, setWinner] = useState<string | null>(null);
-  const [isLobby, setIsLobby] = useState(true);
   const [aiCount, setAiCount] = useState(2);
   const [hoveredTerritory, setHoveredTerritory] = useState<Set<string>>(new Set());
   const [gameId, setGameId] = useState<string | null>(null);
   const [isAIProcessing, setIsAIProcessing] = useState(false);
   const [showSurrenderConfirm, setShowSurrenderConfirm] = useState(false);
   const [isSurrenderHovered, setIsSurrenderHovered] = useState(false);
+  
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<'signin' | 'signup'>('signin');
+  const [isStatsModalOpen, setIsStatsModalOpen] = useState(false);
+  const [isLobbyBrowserOpen, setIsLobbyBrowserOpen] = useState(false);
+  const [isEditingAlias, setIsEditingAlias] = useState(false);
+  const [newAlias, setNewAlias] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
   const stateRef = useRef(state);
 
   useEffect(() => {
@@ -85,6 +99,7 @@ export const Game: React.FC = () => {
           // 2. It just became our turn (AI finished its turn)
           // 3. We are in the lobby or game just started
           const shouldUpdate = 
+            data.status === 'lobby' ||
             (remoteTurnId !== user?.uid && !(isAITurn && isHost)) || 
             (remoteTurnId === user?.uid && localTurnId !== user?.uid) || 
             !stateRef.current;
@@ -194,7 +209,8 @@ export const Game: React.FC = () => {
     initialPlayers.push({
       id: user?.uid || '1',
       name: user?.displayName || 'Player 1',
-      color: colors[0]
+      color: colors[0],
+      stats: { unitsPurchased: 0, goldEarned: 0, tilesClaimed: 0, goldSpent: 0 }
     });
 
     // Add AI players
@@ -203,7 +219,8 @@ export const Game: React.FC = () => {
         id: `ai-${i + 1}`,
         name: `AI Player ${i + 1}`,
         color: colors[(i + 1) % colors.length],
-        isAI: true
+        isAI: true,
+        stats: { unitsPurchased: 0, goldEarned: 0, tilesClaimed: 0, goldSpent: 0 }
       });
     }
 
@@ -234,11 +251,131 @@ export const Game: React.FC = () => {
     }
 
     setState(newState);
-    setIsLobby(false);
+  };
+
+  const hostGame = async () => {
+    if (!user || !userData) return;
+    
+    const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
+    
+    const initialPlayers: Player[] = [{
+      id: user.uid,
+      name: userData.alias || user.displayName || 'Player 1',
+      color: colors[0],
+      stats: { unitsPurchased: 0, goldEarned: 0, tilesClaimed: 0, goldSpent: 0 }
+    }];
+
+    const map = generateRandomMap(7, initialPlayers);
+    
+    let newState: GameState = {
+      id: 'local', // will be overwritten by docRef.id
+      players: initialPlayers,
+      map,
+      currentTurn: 0,
+      status: 'lobby',
+    };
+
+    try {
+      const docRef = await addDoc(collection(db, 'games'), {
+        ...newState,
+        lastUpdated: serverTimestamp(),
+      });
+      setGameId(docRef.id);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'games');
+    }
+  };
+
+  const joinGame = async (gameIdToJoin: string) => {
+    if (!user || !userData) return;
+    
+    try {
+      const gameRef = doc(db, 'games', gameIdToJoin);
+      const gameSnap = await getDoc(gameRef);
+      
+      if (gameSnap.exists()) {
+        const gameData = gameSnap.data() as GameState;
+        
+        // Check if already in game
+        if (gameData.players.some(p => p.id === user.uid)) {
+          setGameId(gameIdToJoin);
+          setIsLobbyBrowserOpen(false);
+          return;
+        }
+
+        // Check if game is full (max 6 players)
+        if (gameData.players.length >= 6) {
+          alert("Game is full!");
+          return;
+        }
+
+        const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
+        const newPlayer: Player = {
+          id: user.uid,
+          name: userData.alias || user.displayName || `Player ${gameData.players.length + 1}`,
+          color: colors[gameData.players.length % colors.length],
+          stats: { unitsPurchased: 0, goldEarned: 0, tilesClaimed: 0, goldSpent: 0 }
+        };
+
+        await updateDoc(gameRef, {
+          players: [...gameData.players, newPlayer],
+          lastUpdated: serverTimestamp()
+        });
+
+        setGameId(gameIdToJoin);
+        setIsLobbyBrowserOpen(false);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `games/${gameIdToJoin}`);
+    }
   };
 
   const login = () => signInWithPopup(auth, googleProvider);
   const logout = () => signOut(auth);
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    if (file.size > 256 * 256 * 4) { // Rough check, better to check dimensions
+      alert("File is too large.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const img = new Image();
+      img.onload = async () => {
+        if (img.width > 256 || img.height > 256) {
+          alert("Image must be 256x256 pixels or smaller.");
+          return;
+        }
+        
+        const base64 = event.target?.result as string;
+        try {
+          await updateDoc(doc(db, 'users', user.uid), {
+            photoURL: base64
+          });
+        } catch (error) {
+          console.error("Error updating photo:", error);
+        }
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleAliasSubmit = async () => {
+    if (!user || !newAlias.trim() || newAlias.trim().length >= 50) return;
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        alias: newAlias.trim()
+      });
+      setIsEditingAlias(false);
+    } catch (error) {
+      console.error("Error updating alias:", error);
+    }
+  };
 
   const handleHexHover = (key: string | null) => {
     if (!state || !key) {
@@ -260,9 +397,46 @@ export const Game: React.FC = () => {
   useEffect(() => {
     if (state) {
       const winId = checkWinner(state);
-      if (winId) setWinner(winId);
+      if (winId && !winner) {
+        setWinner(winId);
+        
+        // Save stats if user is logged in
+        if (user && userData) {
+          const playerStats = state.players.find(p => p.id === user.uid)?.stats;
+          if (playerStats) {
+            const isWin = winId === user.uid;
+            
+            // 1. Create GameStats document
+            addDoc(collection(db, `users/${user.uid}/gameStats`), {
+              gameId: state.id,
+              unitsPurchased: playerStats.unitsPurchased,
+              goldEarned: playerStats.goldEarned,
+              tilesClaimed: playerStats.tilesClaimed,
+              isWin: isWin,
+              timestamp: new Date().toISOString()
+            }).catch(e => console.error("Error saving game stats:", e));
+
+            // 2. Update overall user stats
+            const currentStats = userData.stats || {
+              wins: 0, losses: 0, gamesPlayed: 0, 
+              totalGoldSpent: 0, totalGoldEarned: 0, totalTilesClaimed: 0
+            };
+            
+            updateDoc(doc(db, 'users', user.uid), {
+              stats: {
+                wins: currentStats.wins + (isWin ? 1 : 0),
+                losses: currentStats.losses + (isWin ? 0 : 1),
+                gamesPlayed: currentStats.gamesPlayed + 1,
+                totalGoldSpent: currentStats.totalGoldSpent + playerStats.goldSpent,
+                totalGoldEarned: currentStats.totalGoldEarned + playerStats.goldEarned,
+                totalTilesClaimed: currentStats.totalTilesClaimed + playerStats.tilesClaimed
+              }
+            }).catch(e => console.error("Error updating overall stats:", e));
+          }
+        }
+      }
     }
-  }, [state]);
+  }, [state, winner, user, userData]);
 
   const currentPlayer = state?.players[state.currentTurn];
 
@@ -302,7 +476,7 @@ export const Game: React.FC = () => {
     return active;
   }, [state, currentPlayer, user]);
 
-  if (isLobby) {
+  if (!state && !gameId) {
     return (
       <div className="h-screen flex items-center justify-center bg-slate-950 p-6">
         <motion.div 
@@ -319,31 +493,92 @@ export const Game: React.FC = () => {
           </p>
           
           <div className="space-y-4 mb-8">
-            {!window.isSecureContext && !user && (
-              <div className="p-3 bg-red-900/50 border border-red-700 rounded-xl text-sm text-red-200 text-left mb-4">
-                <strong>Warning:</strong> Your connection is not secure (HTTP). Google Sign-in requires a secure HTTPS connection or localhost to work. The sign-in popup will likely close automatically.
-              </div>
-            )}
-            {user ? (
+            {user && userData ? (
               <div className="flex items-center justify-between p-4 bg-slate-800 rounded-xl border border-slate-700">
                 <div className="flex items-center gap-3">
-                  <img src={user.photoURL || ''} alt="" className="w-10 h-10 rounded-full border border-slate-600" />
+                  <div 
+                    className="relative w-12 h-12 rounded-full border-2 border-slate-600 overflow-hidden group cursor-pointer"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    {userData.photoURL ? (
+                      <img src={userData.photoURL} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full bg-blue-600 flex items-center justify-center text-white font-bold text-lg">
+                        {userData.alias?.substring(0, 2).toUpperCase() || '??'}
+                      </div>
+                    )}
+                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <SquarePen size={20} className="text-white" />
+                    </div>
+                  </div>
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    className="hidden" 
+                    accept="image/jpeg, image/png"
+                    onChange={handleImageUpload}
+                  />
                   <div className="text-left">
-                    <p className="text-s text-white uppercase font-bold">{user.displayName}</p>
+                    {isEditingAlias ? (
+                      <div className="flex items-center gap-2">
+                        <input 
+                          type="text" 
+                          value={newAlias}
+                          onChange={(e) => setNewAlias(e.target.value)}
+                          className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-sm w-32"
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleAliasSubmit();
+                            if (e.key === 'Escape') setIsEditingAlias(false);
+                          }}
+                        />
+                        <button onClick={handleAliasSubmit} className="text-green-400 hover:text-green-300 text-xs font-bold">SAVE</button>
+                      </div>
+                    ) : (
+                      <p 
+                        className="text-lg text-white font-bold cursor-pointer hover:text-blue-400 transition-colors flex items-center gap-2 group"
+                        onClick={() => {
+                          setNewAlias(userData.alias || '');
+                          setIsEditingAlias(true);
+                        }}
+                      >
+                        {userData.alias || 'Anonymous'}
+                        <SquarePen size={14} className="opacity-0 group-hover:opacity-100 text-slate-400" />
+                      </p>
+                    )}
+                    <p className="text-xs text-slate-500 uppercase font-bold">@{userData.displayName}</p>
                   </div>
                 </div>
-                <button onClick={logout}>
-                  <LogOut size={30} className="text-slate-500 hover:text-red-400" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setIsStatsModalOpen(true)} className="p-2 text-slate-400 hover:text-blue-400 transition-colors rounded-lg hover:bg-slate-700/50">
+                    <ChartNoAxesCombined size={24} />
+                  </button>
+                  <button onClick={logout} className="p-2 text-slate-400 hover:text-red-400 transition-colors rounded-lg hover:bg-slate-700/50">
+                    <LogOut size={24} />
+                  </button>
+                </div>
               </div>
             ) : (
-              <button 
-                onClick={login}
-                className="w-full flex items-center justify-center gap-3 p-4 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-600 transition-all"
-              >
-                <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="" />
-                Sign in with Google
-              </button>
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => {
+                    setAuthModalMode('signin');
+                    setIsAuthModalOpen(true);
+                  }}
+                  className="flex-1 p-4 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-700 transition-all border border-slate-700"
+                >
+                  Sign In
+                </button>
+                <button 
+                  onClick={() => {
+                    setAuthModalMode('signup');
+                    setIsAuthModalOpen(true);
+                  }}
+                  className="flex-1 p-4 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-500 transition-all shadow-lg shadow-blue-900/20"
+                >
+                  Create Account
+                </button>
+              </div>
             )}
             
             <div className="flex items-center gap-3 p-4 bg-slate-800 rounded-xl border border-slate-700">
@@ -389,18 +624,95 @@ export const Game: React.FC = () => {
             </div>
           </div>
 
-          <button 
-            onClick={startGame}
-            className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-bold text-lg text-white transition-all shadow-lg shadow-blue-900/20 active:scale-95"
-          >
-            Start Singleplayer
-          </button>
+          <div className="space-y-3">
+            <button 
+              onClick={startGame}
+              className="w-full bg-slate-800 hover:bg-slate-700 py-4 rounded-xl font-bold text-lg text-white transition-all border border-slate-700 active:scale-95"
+            >
+              Start Singleplayer
+            </button>
+            
+            {user && (
+              <div className="flex gap-3">
+                <button 
+                  onClick={hostGame}
+                  className="flex-1 bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-bold text-lg text-white transition-all shadow-lg shadow-blue-900/20 active:scale-95"
+                >
+                  Host Game
+                </button>
+                <button 
+                  onClick={() => setIsLobbyBrowserOpen(true)}
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-500 py-4 rounded-xl font-bold text-lg text-white transition-all shadow-lg shadow-emerald-900/20 active:scale-95"
+                >
+                  Join Game
+                </button>
+              </div>
+            )}
+          </div>
         </motion.div>
       </div>
     );
   }
 
   if (!state || !currentPlayer) return <div>Loading...</div>;
+
+  if (state.status === 'lobby') {
+    const isHost = user?.uid === state.players[0]?.id;
+
+    const startMultiplayerGame = async () => {
+      if (!isHost || !gameId) return;
+      
+      let newState = _.cloneDeep(state);
+      newState.status = 'playing';
+      
+      // Regenerate map with all joined players
+      newState.map = generateRandomMap(7, newState.players);
+      
+      // Process the first player's turn (income, upkeep, reset movement)
+      newState = processTurn(newState, newState.players[0].id);
+      
+      await updateGameState(newState);
+    };
+
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
+        <motion.div 
+          initial={{ scale: 0.9, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className="bg-slate-900 p-8 rounded-3xl max-w-md w-full border border-slate-800 shadow-2xl"
+        >
+          <h1 className="text-3xl font-black text-white mb-6 text-center">Game Lobby</h1>
+          
+          <div className="space-y-4 mb-8">
+            <h2 className="text-slate-400 font-bold uppercase text-sm">Players ({state.players.length}/6)</h2>
+            <div className="space-y-2">
+              {state.players.map((p, i) => (
+                <div key={p.id} className="flex items-center gap-3 bg-slate-800 p-3 rounded-xl border border-slate-700">
+                  <div className="w-4 h-4 rounded-full" style={{ backgroundColor: p.color }} />
+                  <span className="text-white font-medium flex-1">{p.name}</span>
+                  {i === 0 && <Crown size={16} className="text-yellow-400" />}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {isHost ? (
+            <button 
+              onClick={startMultiplayerGame}
+              disabled={state.players.length < 2}
+              className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 py-4 rounded-xl font-bold text-lg text-white transition-all shadow-lg shadow-blue-900/20 active:scale-95"
+            >
+              {state.players.length < 2 ? 'Waiting for players...' : 'Start Game'}
+            </button>
+          ) : (
+            <div className="text-center p-4 bg-slate-800 rounded-xl border border-slate-700">
+              <p className="text-slate-400 font-medium">Waiting for host to start...</p>
+            </div>
+          )}
+        </motion.div>
+      </div>
+    );
+  }
 
   const handleHexRightClick = (key: string, e: React.MouseEvent) => {
     if (!state || !currentPlayer || isAIProcessing) return;
@@ -434,6 +746,13 @@ export const Game: React.FC = () => {
       let newState = _.cloneDeep(state);
       newState.map[hexKey].unit = unitType;
       newState.map[capitalKey].gold = (capital.gold || 0) - cost;
+      
+      const pIndex = newState.players.findIndex(p => p.id === currentPlayer.id);
+      if (pIndex !== -1 && newState.players[pIndex].stats) {
+        newState.players[pIndex].stats!.unitsPurchased++;
+        newState.players[pIndex].stats!.goldSpent += cost;
+      }
+
       newState = updateTerritories(newState, state);
       updateGameState(newState);
       stateRef.current = newState;
@@ -481,6 +800,13 @@ export const Game: React.FC = () => {
             newState.map[key].ownerId = currentPlayer.id;
             newState.map[key].unit = attackerHex.unit;
             
+            if (isEnemyTerritory) {
+              const pIndex = newState.players.findIndex(p => p.id === currentPlayer.id);
+              if (pIndex !== -1 && newState.players[pIndex].stats) {
+                newState.players[pIndex].stats!.tilesClaimed++;
+              }
+            }
+
             // Lose action if moving into enemy territory or chopping a tree
             if (isEnemyTerritory || wasTree) {
               newState.map[key].hasMoved = true;
@@ -642,7 +968,7 @@ export const Game: React.FC = () => {
                     onClick={() => {
                       setShowSurrenderConfirm(false);
                       setState(null);
-                      setIsLobby(true);
+                      setGameId(null);
                     }}
                     className="w-full py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg font-bold shadow-lg transition-colors"
                   >
@@ -796,6 +1122,23 @@ export const Game: React.FC = () => {
           </div>
         )}
       </div>
+
+      <AuthModal 
+        isOpen={isAuthModalOpen} 
+        onClose={() => setIsAuthModalOpen(false)} 
+        initialMode={authModalMode} 
+      />
+      
+      <StatsModal 
+        isOpen={isStatsModalOpen} 
+        onClose={() => setIsStatsModalOpen(false)} 
+      />
+
+      <LobbyBrowser
+        isOpen={isLobbyBrowserOpen}
+        onClose={() => setIsLobbyBrowserOpen(false)}
+        onJoinGame={joinGame}
+      />
     </div>
   );
 };

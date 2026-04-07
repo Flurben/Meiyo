@@ -35,10 +35,36 @@
       "properties": {
         "uid": { "type": "string" },
         "displayName": { "type": "string" },
+        "alias": { "type": "string" },
         "email": { "type": "string" },
-        "photoURL": { "type": "string" }
+        "photoURL": { "type": "string" },
+        "stats": {
+          "type": "object",
+          "properties": {
+            "wins": { "type": "number" },
+            "losses": { "type": "number" },
+            "gamesPlayed": { "type": "number" },
+            "totalGoldSpent": { "type": "number" },
+            "totalGoldEarned": { "type": "number" },
+            "totalTilesClaimed": { "type": "number" }
+          }
+        }
       },
-      "required": ["uid", "displayName"]
+      "required": ["uid", "displayName", "alias"]
+    },
+    "GameStats": {
+      "title": "GameStats",
+      "description": "Statistics for a specific game",
+      "type": "object",
+      "properties": {
+        "gameId": { "type": "string" },
+        "unitsPurchased": { "type": "number" },
+        "goldEarned": { "type": "number" },
+        "tilesClaimed": { "type": "number" },
+        "isWin": { "type": "boolean" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["gameId", "unitsPurchased", "goldEarned", "tilesClaimed", "isWin"]
     }
   },
   "firestore": {
@@ -49,6 +75,10 @@
     "/users/{userId}": {
       "schema": "User",
       "description": "User profiles"
+    },
+    "/users/{userId}/gameStats/{statId}": {
+      "schema": "GameStats",
+      "description": "User's game statistics"
     }
   }
 }

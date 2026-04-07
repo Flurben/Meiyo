@@ -236,6 +236,11 @@ export function processTurn(state: GameState, playerId: string): GameState {
     const income = calculateIncome(territory, newState.map);
     const upkeep = calculateUpkeep(territory, newState.map);
     
+    const pIndex = newState.players.findIndex(p => p.id === playerId);
+    if (pIndex !== -1 && newState.players[pIndex].stats) {
+      newState.players[pIndex].stats!.goldEarned += income;
+    }
+
     // Find the capital hex for this territory
     const capitalKey = territory.find(key => newState.map[key].isCapital);
     if (capitalKey) {

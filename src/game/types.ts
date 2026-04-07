@@ -6,6 +6,12 @@ export interface Player {
   name: string;
   color: string;
   isAI?: boolean;
+  stats?: {
+    unitsPurchased: number;
+    goldEarned: number;
+    tilesClaimed: number;
+    goldSpent: number;
+  };
 }
 
 export interface HexData {
