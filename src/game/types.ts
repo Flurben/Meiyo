@@ -31,6 +31,7 @@ export interface GameState {
   currentTurn: number; // Index of player
   status: 'lobby' | 'playing' | 'finished';
   winnerId?: string;
+  joinCode?: string;
 }
 
 export const UNIT_STATS = {

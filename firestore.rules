@@ -71,7 +71,8 @@ service cloud.firestore {
              data.players is list && data.players.size() <= 6 &&
              data.map is map &&
              data.currentTurn is int &&
-             data.status in ['lobby', 'playing', 'finished'];
+             data.status in ['lobby', 'playing', 'finished'] &&
+             (!('joinCode' in data) || (data.joinCode is string && data.joinCode.size() == 6));
     }
 
     // ===============================================================
@@ -94,6 +95,7 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isValidGame(request.resource.data);
       allow update: if isAuthenticated() && isValidGame(request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.players[0].id == request.auth.uid; // Allow host to delete lobby
     }
   }
 }

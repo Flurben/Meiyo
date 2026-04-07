@@ -44,13 +44,16 @@ import {
   addDoc, 
   serverTimestamp,
   getDoc,
-  updateDoc
+  updateDoc,
+  query,
+  where,
+  getDocs,
+  deleteDoc
 } from 'firebase/firestore';
 
 import { runAITurnAsync } from '../game/ai';
 import { AuthModal } from './AuthModal';
 import { StatsModal } from './StatsModal';
-import { LobbyBrowser } from './LobbyBrowser';
 
 export const Game: React.FC = () => {
   const { user, userData, loading: authLoading, isAuthReady } = useAuth();
@@ -69,9 +72,11 @@ export const Game: React.FC = () => {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'signin' | 'signup'>('signin');
   const [isStatsModalOpen, setIsStatsModalOpen] = useState(false);
-  const [isLobbyBrowserOpen, setIsLobbyBrowserOpen] = useState(false);
   const [isEditingAlias, setIsEditingAlias] = useState(false);
   const [newAlias, setNewAlias] = useState('');
+  const [joinCodeInput, setJoinCodeInput] = useState('');
+  const [joinError, setJoinError] = useState('');
+  const [showCloseLobbyConfirm, setShowCloseLobbyConfirm] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const stateRef = useRef(state);
@@ -266,6 +271,7 @@ export const Game: React.FC = () => {
     }];
 
     const map = generateRandomMap(7, initialPlayers);
+    const joinCode = Math.floor(100000 + Math.random() * 900000).toString();
     
     let newState: GameState = {
       id: 'local', // will be overwritten by docRef.id
@@ -273,6 +279,7 @@ export const Game: React.FC = () => {
       map,
       currentTurn: 0,
       status: 'lobby',
+      joinCode,
     };
 
     try {
@@ -286,47 +293,52 @@ export const Game: React.FC = () => {
     }
   };
 
-  const joinGame = async (gameIdToJoin: string) => {
+  const joinGame = async (code: string) => {
     if (!user || !userData) return;
+    setJoinError('');
     
     try {
-      const gameRef = doc(db, 'games', gameIdToJoin);
-      const gameSnap = await getDoc(gameRef);
+      const gamesRef = collection(db, 'games');
+      const q = query(gamesRef, where('joinCode', '==', code), where('status', '==', 'lobby'));
+      const querySnapshot = await getDocs(q);
       
-      if (gameSnap.exists()) {
-        const gameData = gameSnap.data() as GameState;
-        
-        // Check if already in game
-        if (gameData.players.some(p => p.id === user.uid)) {
-          setGameId(gameIdToJoin);
-          setIsLobbyBrowserOpen(false);
-          return;
-        }
-
-        // Check if game is full (max 6 players)
-        if (gameData.players.length >= 6) {
-          alert("Game is full!");
-          return;
-        }
-
-        const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
-        const newPlayer: Player = {
-          id: user.uid,
-          name: userData.alias || user.displayName || `Player ${gameData.players.length + 1}`,
-          color: colors[gameData.players.length % colors.length],
-          stats: { unitsPurchased: 0, goldEarned: 0, tilesClaimed: 0, goldSpent: 0 }
-        };
-
-        await updateDoc(gameRef, {
-          players: [...gameData.players, newPlayer],
-          lastUpdated: serverTimestamp()
-        });
-
-        setGameId(gameIdToJoin);
-        setIsLobbyBrowserOpen(false);
+      if (querySnapshot.empty) {
+        setJoinError('Invalid join code or game already started.');
+        return;
       }
+
+      const gameDoc = querySnapshot.docs[0];
+      const gameRef = doc(db, 'games', gameDoc.id);
+      const gameData = gameDoc.data() as GameState;
+      
+      // Check if already in game
+      if (gameData.players.some(p => p.id === user.uid)) {
+        setGameId(gameDoc.id);
+        return;
+      }
+
+      // Check if game is full (max 6 players)
+      if (gameData.players.length >= 6) {
+        setJoinError('Game is full!');
+        return;
+      }
+
+      const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
+      const newPlayer: Player = {
+        id: user.uid,
+        name: userData.alias || user.displayName || `Player ${gameData.players.length + 1}`,
+        color: colors[gameData.players.length % colors.length],
+        stats: { unitsPurchased: 0, goldEarned: 0, tilesClaimed: 0, goldSpent: 0 }
+      };
+
+      await updateDoc(gameRef, {
+        players: [...gameData.players, newPlayer],
+        lastUpdated: serverTimestamp()
+      });
+
+      setGameId(gameDoc.id);
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `games/${gameIdToJoin}`);
+      handleFirestoreError(error, OperationType.GET, 'games');
     }
   };
 
@@ -395,7 +407,7 @@ export const Game: React.FC = () => {
   };
 
   useEffect(() => {
-    if (state) {
+    if (state && state.status === 'playing') {
       const winId = checkWinner(state);
       if (winId && !winner) {
         setWinner(winId);
@@ -633,19 +645,31 @@ export const Game: React.FC = () => {
             </button>
             
             {user && (
-              <div className="flex gap-3">
+              <div className="space-y-3">
                 <button 
                   onClick={hostGame}
-                  className="flex-1 bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-bold text-lg text-white transition-all shadow-lg shadow-blue-900/20 active:scale-95"
+                  className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-bold text-lg text-white transition-all shadow-lg shadow-blue-900/20 active:scale-95"
                 >
                   Host Game
                 </button>
-                <button 
-                  onClick={() => setIsLobbyBrowserOpen(true)}
-                  className="flex-1 bg-emerald-600 hover:bg-emerald-500 py-4 rounded-xl font-bold text-lg text-white transition-all shadow-lg shadow-emerald-900/20 active:scale-95"
-                >
-                  Join Game
-                </button>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Enter A Join Code"
+                    value={joinCodeInput}
+                    onChange={(e) => setJoinCodeInput(e.target.value)}
+                    maxLength={6}
+                    className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 text-white font-mono text-center focus:outline-none focus:border-blue-500"
+                  />
+                  <button 
+                    onClick={() => joinGame(joinCodeInput)}
+                    disabled={joinCodeInput.length !== 6}
+                    className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 px-6 rounded-xl font-bold text-white transition-all shadow-lg shadow-emerald-900/20 active:scale-95"
+                  >
+                    Join
+                  </button>
+                </div>
+                {joinError && <p className="text-red-400 text-sm text-center">{joinError}</p>}
               </div>
             )}
           </div>
@@ -659,11 +683,6 @@ export const Game: React.FC = () => {
         <StatsModal 
           isOpen={isStatsModalOpen} 
           onClose={() => setIsStatsModalOpen(false)} 
-        />
-        <LobbyBrowser
-          isOpen={isLobbyBrowserOpen}
-          onClose={() => setIsLobbyBrowserOpen(false)}
-          onJoinGame={joinGame}
         />
       </div>
     );
@@ -689,6 +708,18 @@ export const Game: React.FC = () => {
       await updateGameState(newState);
     };
 
+    const closeLobby = async () => {
+      if (!isHost || !gameId) return;
+      try {
+        await deleteDoc(doc(db, 'games', gameId));
+        setGameId(null);
+        setState(null);
+        setShowCloseLobbyConfirm(false);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, `games/${gameId}`);
+      }
+    };
+
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
         <motion.div 
@@ -696,7 +727,16 @@ export const Game: React.FC = () => {
           animate={{ scale: 1, opacity: 1 }}
           className="bg-slate-900 p-8 rounded-3xl max-w-md w-full border border-slate-800 shadow-2xl"
         >
-          <h1 className="text-3xl font-black text-white mb-6 text-center">Game Lobby</h1>
+          <h1 className="text-3xl font-black text-white mb-2 text-center">Game Lobby</h1>
+          
+          {state.joinCode && (
+            <div className="mb-6 text-center">
+              <p className="text-slate-400 text-sm mb-1">Join Code</p>
+              <div className="bg-slate-950 border border-slate-700 rounded-xl py-3 px-6 inline-block">
+                <span className="text-2xl font-mono font-bold text-emerald-400 tracking-widest">{state.joinCode}</span>
+              </div>
+            </div>
+          )}
           
           <div className="space-y-4 mb-8">
             <h2 className="text-slate-400 font-bold uppercase text-sm">Players ({state.players.length}/6)</h2>
@@ -712,16 +752,53 @@ export const Game: React.FC = () => {
           </div>
 
           {isHost ? (
-            <button 
-              onClick={startMultiplayerGame}
-              disabled={state.players.length < 2}
-              className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 py-4 rounded-xl font-bold text-lg text-white transition-all shadow-lg shadow-blue-900/20 active:scale-95"
-            >
-              {state.players.length < 2 ? 'Waiting for players...' : 'Start Game'}
-            </button>
+            <div className="space-y-3">
+              <button 
+                onClick={startMultiplayerGame}
+                disabled={state.players.length < 2}
+                className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 py-4 rounded-xl font-bold text-lg text-white transition-all shadow-lg shadow-blue-900/20 active:scale-95"
+              >
+                {state.players.length < 2 ? 'Waiting for players...' : 'Start Game'}
+              </button>
+              
+              {showCloseLobbyConfirm ? (
+                <div className="flex gap-2">
+                  <button 
+                    onClick={closeLobby}
+                    className="flex-1 bg-red-600 hover:bg-red-500 py-3 rounded-xl font-bold text-white transition-all shadow-lg shadow-red-900/20 active:scale-95"
+                  >
+                    Confirm Close
+                  </button>
+                  <button 
+                    onClick={() => setShowCloseLobbyConfirm(false)}
+                    className="flex-1 bg-slate-700 hover:bg-slate-600 py-3 rounded-xl font-bold text-white transition-all active:scale-95"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button 
+                  onClick={() => setShowCloseLobbyConfirm(true)}
+                  className="w-full bg-slate-800 hover:bg-slate-700 py-3 rounded-xl font-bold text-red-400 transition-all active:scale-95"
+                >
+                  Close Lobby
+                </button>
+              )}
+            </div>
           ) : (
-            <div className="text-center p-4 bg-slate-800 rounded-xl border border-slate-700">
-              <p className="text-slate-400 font-medium">Waiting for host to start...</p>
+            <div className="space-y-3">
+              <div className="text-center p-4 bg-slate-800 rounded-xl border border-slate-700">
+                <p className="text-slate-400 font-medium">Waiting for host to start...</p>
+              </div>
+              <button 
+                onClick={() => {
+                  setGameId(null);
+                  setState(null);
+                }}
+                className="w-full bg-slate-800 hover:bg-slate-700 py-3 rounded-xl font-bold text-red-400 transition-all active:scale-95"
+              >
+                Leave Lobby
+              </button>
             </div>
           )}
         </motion.div>
@@ -1190,12 +1267,6 @@ export const Game: React.FC = () => {
       <StatsModal 
         isOpen={isStatsModalOpen} 
         onClose={() => setIsStatsModalOpen(false)} 
-      />
-
-      <LobbyBrowser
-        isOpen={isLobbyBrowserOpen}
-        onClose={() => setIsLobbyBrowserOpen(false)}
-        onJoinGame={joinGame}
       />
     </div>
   );
