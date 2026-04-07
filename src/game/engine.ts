@@ -294,10 +294,21 @@ export function processTurn(state: GameState, playerId: string): GameState {
 export function checkWinner(state: GameState): string | null {
   const activePlayers = new Set<string>();
   for (const key in state.map) {
-    if (state.map[key].ownerId) {
-      activePlayers.add(state.map[key].ownerId!);
+    const ownerId = state.map[key].ownerId;
+    if (ownerId) {
+      const player = state.players.find(p => p.id === ownerId);
+      if (player && !player.hasSurrendered) {
+        activePlayers.add(ownerId);
+      }
     }
   }
+  
+  // Also check if only one player hasn't surrendered
+  const nonSurrenderedPlayers = state.players.filter(p => !p.hasSurrendered);
+  if (nonSurrenderedPlayers.length === 1) {
+    return nonSurrenderedPlayers[0].id;
+  }
+
   if (activePlayers.size === 1) {
     return Array.from(activePlayers)[0];
   }

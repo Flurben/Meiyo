@@ -6,6 +6,7 @@ export interface Player {
   name: string;
   color: string;
   isAI?: boolean;
+  hasSurrendered?: boolean;
   stats?: {
     unitsPurchased: number;
     goldEarned: number;

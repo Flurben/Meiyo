@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { GameState, HexData, Player, UnitType, UNIT_STATS } from '../game/types';
 import { HexGrid } from './HexGrid';
 import { generateRandomMap } from '../game/mapGenerator';
@@ -77,11 +77,28 @@ export const Game: React.FC = () => {
   const [joinCodeInput, setJoinCodeInput] = useState('');
   const [joinError, setJoinError] = useState('');
   const [showCloseLobbyConfirm, setShowCloseLobbyConfirm] = useState(false);
+  const [surrenderNotifications, setSurrenderNotifications] = useState<{id: string, message: string}[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const stateRef = useRef(state);
 
   useEffect(() => {
+    if (state && stateRef.current) {
+      const newlySurrendered = state.players.filter(p => 
+        p.hasSurrendered && 
+        !stateRef.current!.players.find(oldP => oldP.id === p.id)?.hasSurrendered
+      );
+      
+      if (newlySurrendered.length > 0) {
+        newlySurrendered.forEach(p => {
+          const id = Math.random().toString();
+          setSurrenderNotifications(prev => [...prev, { id, message: `${p.name} has surrendered!` }]);
+          setTimeout(() => {
+            setSurrenderNotifications(prev => prev.filter(n => n.id !== id));
+          }, 5000);
+        });
+      }
+    }
     stateRef.current = state;
   }, [state]);
 
@@ -174,7 +191,12 @@ export const Game: React.FC = () => {
             });
             
             const nextState = _.cloneDeep(aiProcessedState);
-            nextState.currentTurn = (nextState.currentTurn + 1) % nextState.players.length;
+            let loopCount = 0;
+            do {
+              nextState.currentTurn = (nextState.currentTurn + 1) % nextState.players.length;
+              loopCount++;
+              if (loopCount > nextState.players.length) break;
+            } while (nextState.players[nextState.currentTurn].hasSurrendered);
             
             console.log(`AI ${currentPlayer.name} finished. Next turn: ${nextState.currentTurn}`);
             // Process the next player's turn (income, upkeep, reset movement)
@@ -488,6 +510,66 @@ export const Game: React.FC = () => {
     return active;
   }, [state, currentPlayer, user]);
 
+  const handleSurrender = async () => {
+    if (!state || !user || !userData) return;
+    setShowSurrenderConfirm(false);
+    
+    let newState = _.cloneDeep(state);
+    const pIndex = newState.players.findIndex(p => p.id === user.uid);
+    if (pIndex !== -1) {
+      newState.players[pIndex].hasSurrendered = true;
+      
+      // Record loss immediately
+      const playerStats = newState.players[pIndex].stats;
+      if (playerStats) {
+        addDoc(collection(db, `users/${user.uid}/gameStats`), {
+          gameId: state.id,
+          unitsPurchased: playerStats.unitsPurchased,
+          goldEarned: playerStats.goldEarned,
+          tilesClaimed: playerStats.tilesClaimed,
+          isWin: false,
+          timestamp: new Date().toISOString()
+        }).catch(e => console.error("Error saving game stats:", e));
+
+        const currentStats = userData.stats || {
+          wins: 0, losses: 0, gamesPlayed: 0, 
+          totalGoldSpent: 0, totalGoldEarned: 0, totalTilesClaimed: 0
+        };
+        
+        updateDoc(doc(db, 'users', user.uid), {
+          stats: {
+            wins: currentStats.wins,
+            losses: currentStats.losses + 1,
+            gamesPlayed: currentStats.gamesPlayed + 1,
+            totalGoldSpent: currentStats.totalGoldSpent + playerStats.goldSpent,
+            totalGoldEarned: currentStats.totalGoldEarned + playerStats.goldEarned,
+            totalTilesClaimed: currentStats.totalTilesClaimed + playerStats.tilesClaimed
+          }
+        }).catch(e => console.error("Error updating overall stats:", e));
+      }
+      
+      // If it's their turn, skip to next turn
+      if (newState.currentTurn === pIndex) {
+        let loopCount = 0;
+        do {
+          newState.currentTurn = (newState.currentTurn + 1) % newState.players.length;
+          loopCount++;
+          if (loopCount > newState.players.length) break;
+        } while (newState.players[newState.currentTurn].hasSurrendered);
+        newState = processTurn(newState, newState.players[newState.currentTurn].id);
+      }
+      
+      // We should also check if this surrender causes a win
+      const winId = checkWinner(newState);
+      if (winId) {
+        newState.status = 'finished';
+        newState.winnerId = winId;
+      }
+      
+      await updateGameState(newState);
+    }
+  };
+
   if (!state && !gameId) {
     return (
       <div className="h-screen flex items-center justify-center bg-slate-950 p-6">
@@ -659,12 +741,12 @@ export const Game: React.FC = () => {
                     value={joinCodeInput}
                     onChange={(e) => setJoinCodeInput(e.target.value)}
                     maxLength={6}
-                    className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 text-white font-mono text-center focus:outline-none focus:border-blue-500"
+                    className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 !text-white placeholder:text-slate-500 font-mono text-center focus:outline-none focus:border-blue-500 text-lg py-4"
                   />
                   <button 
                     onClick={() => joinGame(joinCodeInput)}
                     disabled={joinCodeInput.length !== 6}
-                    className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 px-6 rounded-xl font-bold text-white transition-all shadow-lg shadow-emerald-900/20 active:scale-95"
+                    className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 disabled:shadow-none px-8 rounded-xl font-bold text-lg text-white transition-all shadow-lg shadow-emerald-900/20 active:scale-95"
                   >
                     Join
                   </button>
@@ -756,7 +838,7 @@ export const Game: React.FC = () => {
               <button 
                 onClick={startMultiplayerGame}
                 disabled={state.players.length < 2}
-                className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 py-4 rounded-xl font-bold text-lg text-white transition-all shadow-lg shadow-blue-900/20 active:scale-95"
+                className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 disabled:shadow-none py-4 rounded-xl font-bold text-lg text-white transition-all shadow-lg shadow-blue-900/20 active:scale-95"
               >
                 {state.players.length < 2 ? 'Waiting for players...' : 'Start Game'}
               </button>
@@ -791,7 +873,16 @@ export const Game: React.FC = () => {
                 <p className="text-slate-400 font-medium">Waiting for host to start...</p>
               </div>
               <button 
-                onClick={() => {
+                onClick={async () => {
+                  if (gameId && user) {
+                    try {
+                      const gameRef = doc(db, 'games', gameId);
+                      const newPlayers = state.players.filter(p => p.id !== user.uid);
+                      await updateDoc(gameRef, { players: newPlayers });
+                    } catch (error) {
+                      handleFirestoreError(error, OperationType.UPDATE, `games/${gameId}`);
+                    }
+                  }
                   setGameId(null);
                   setState(null);
                 }}
@@ -976,7 +1067,13 @@ export const Game: React.FC = () => {
   const nextTurn = async () => {
     if (!state || !currentPlayer) return;
     let newState = _.cloneDeep(state);
-    newState.currentTurn = (newState.currentTurn + 1) % newState.players.length;
+    
+    let loopCount = 0;
+    do {
+      newState.currentTurn = (newState.currentTurn + 1) % newState.players.length;
+      loopCount++;
+      if (loopCount > newState.players.length) break; // Prevent infinite loop if everyone surrendered
+    } while (newState.players[newState.currentTurn].hasSurrendered);
     
     // Process the next player's turn (income, upkeep, reset movement)
     newState = processTurn(newState, newState.players[newState.currentTurn].id);
@@ -1100,11 +1197,7 @@ export const Game: React.FC = () => {
                   className="absolute bottom-full right-0 mb-2 flex flex-col gap-2 w-full"
                 >
                   <button 
-                    onClick={() => {
-                      setShowSurrenderConfirm(false);
-                      setState(null);
-                      setGameId(null);
-                    }}
+                    onClick={handleSurrender}
                     className="w-full py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg font-bold shadow-lg transition-colors"
                   >
                     Yes
@@ -1268,6 +1361,24 @@ export const Game: React.FC = () => {
         isOpen={isStatsModalOpen} 
         onClose={() => setIsStatsModalOpen(false)} 
       />
+
+      {/* Notifications */}
+      <div className="absolute top-24 right-6 z-50 flex flex-col gap-2 pointer-events-none">
+        <AnimatePresence>
+          {surrenderNotifications.map(notification => (
+            <motion.div
+              key={notification.id}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              className="bg-slate-900/90 backdrop-blur-md border border-slate-700 p-3 rounded-xl shadow-2xl text-white font-medium flex items-center gap-2"
+            >
+              <Flag size={16} className="text-red-400" />
+              {notification.message}
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
     </div>
   );
 };
