@@ -1,6 +1,9 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import https from "https";
+import fs from "fs";
+
 
 async function startServer() {
   const app = express();
@@ -26,8 +29,14 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
+  https.createServer(
+  {
+    key: fs.readFileSync('./letsencrypt-meiyo/privkey.pem'),
+    cert: fs.readFileSync('./letsencrypt-meiyo/cert.pem'),
+  },
+  app
+  ).listen(3000, () => {
+    console.log('Listen on https://localhost:3000')
   });
 }
 
