@@ -11,8 +11,10 @@ async function startServer() {
   const app = express();
   const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
   
+  const isProduction = process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
+  
   let httpServer;
-  if (process.env.NODE_ENV === "production") {
+  if (isProduction) {
     const options = {
       key: fs.readFileSync('./letsencrypt-meiyo/privkey.pem'),
       cert: fs.readFileSync('./letsencrypt-meiyo/cert.pem'),
@@ -70,7 +72,7 @@ async function startServer() {
   });
 
   // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  if (!isProduction) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -85,7 +87,7 @@ async function startServer() {
   }
 
   httpServer.listen(PORT, "0.0.0.0", () => {
-    const protocol = process.env.NODE_ENV === "production" ? "https" : "http";
+    const protocol = isProduction ? "https" : "http";
     console.log(`Server running on ${protocol}://0.0.0.0:${PORT}`);
   });
 }
