@@ -34,29 +34,14 @@ const INITIAL_PLAYERS: Player[] = [
 ];
 
 import { useAuth } from '../AuthProvider';
-import { auth, db, googleProvider, handleFirestoreError, OperationType } from '../firebase';
-import { signInWithPopup, signOut } from 'firebase/auth';
-import { 
-  doc, 
-  setDoc, 
-  onSnapshot, 
-  collection, 
-  addDoc, 
-  serverTimestamp,
-  getDoc,
-  updateDoc,
-  query,
-  where,
-  getDocs,
-  deleteDoc
-} from 'firebase/firestore';
+import { io, Socket } from 'socket.io-client';
 
 import { runAITurnAsync } from '../game/ai';
 import { AuthModal } from './AuthModal';
 import { StatsModal } from './StatsModal';
 
 export const Game: React.FC = () => {
-  const { user, userData, loading: authLoading, isAuthReady } = useAuth();
+  const { user, userData, loading: authLoading, isAuthReady, signOut } = useAuth();
   const [state, setState] = useState<GameState | null>(null);
   const [selectedHex, setSelectedHex] = useState<string | null>(null);
   const [radialMenu, setRadialMenu] = useState<{ x: number, y: number, hexKey: string } | null>(null);
@@ -81,6 +66,19 @@ export const Game: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const stateRef = useRef(state);
+  const socketRef = useRef<Socket | null>(null);
+
+  useEffect(() => {
+    if (!socketRef.current) {
+      socketRef.current = io();
+    }
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (state && stateRef.current) {
@@ -104,53 +102,44 @@ export const Game: React.FC = () => {
 
   // Listen for remote state changes
   useEffect(() => {
-    if (gameId && isAuthReady) {
-      const gameRef = doc(db, 'games', gameId);
-      const unsubscribe = onSnapshot(gameRef, (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data() as GameState;
-          
-          const remoteTurnId = data.players[data.currentTurn].id;
-          const localTurnId = stateRef.current?.players[stateRef.current?.currentTurn]?.id;
-          
-          const isHost = user?.uid === data.players[0].id;
-          const isAITurn = data.players[data.currentTurn].isAI;
-          
-          // Update local state if:
-          // 1. It's not our turn AND (it's not an AI turn OR we are not the host)
-          // 2. It just became our turn (AI finished its turn)
-          // 3. We are in the lobby or game just started
-          const shouldUpdate = 
-            data.status === 'lobby' ||
-            (remoteTurnId !== user?.uid && !(isAITurn && isHost)) || 
-            (remoteTurnId === user?.uid && localTurnId !== user?.uid) || 
-            !stateRef.current;
+    if (gameId && isAuthReady && socketRef.current) {
+      socketRef.current.emit('joinGame', gameId);
+      
+      const handleGameState = (data: GameState) => {
+        const remoteTurnId = data.players[data.currentTurn].id;
+        const localTurnId = stateRef.current?.players[stateRef.current?.currentTurn]?.id;
+        
+        const isHost = user?.uid === data.players[0].id;
+        const isAITurn = data.players[data.currentTurn].isAI;
+        
+        const shouldUpdate = 
+          data.status === 'lobby' ||
+          (remoteTurnId !== user?.uid && !(isAITurn && isHost)) || 
+          (remoteTurnId === user?.uid && localTurnId !== user?.uid) || 
+          !stateRef.current;
 
-          if (shouldUpdate) {
-            setState(data);
-            stateRef.current = data;
-          }
+        if (shouldUpdate) {
+          setState(data);
+          stateRef.current = data;
         }
-      }, (error) => {
-        handleFirestoreError(error, OperationType.GET, `games/${gameId}`);
-      });
-      return () => unsubscribe();
+      };
+
+      socketRef.current.on('gameState', handleGameState);
+
+      return () => {
+        if (socketRef.current) {
+          socketRef.current.emit('leaveGame', gameId);
+          socketRef.current.off('gameState', handleGameState);
+        }
+      };
     }
   }, [gameId, isAuthReady, user?.uid]);
 
   const updateGameState = async (newState: GameState) => {
     setState(newState);
     stateRef.current = newState;
-    if (gameId) {
-      try {
-        const gameRef = doc(db, 'games', gameId);
-        await setDoc(gameRef, {
-          ...newState,
-          lastUpdated: serverTimestamp(),
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, `games/${gameId}`);
-      }
+    if (gameId && socketRef.current) {
+      socketRef.current.emit('updateGame', newState);
     }
   };
 
@@ -265,23 +254,18 @@ export const Game: React.FC = () => {
     newState = processTurn(newState, initialPlayers[0].id);
 
     stateRef.current = newState;
-    if (user) {
-      try {
-        const docRef = await addDoc(collection(db, 'games'), {
-          ...newState,
-          lastUpdated: serverTimestamp(),
-        });
-        setGameId(docRef.id);
-      } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, 'games');
-      }
+    if (user && socketRef.current) {
+      const newGameId = Math.random().toString(36).substring(2, 15);
+      newState.id = newGameId;
+      socketRef.current.emit('updateGame', newState);
+      setGameId(newGameId);
     }
 
     setState(newState);
   };
 
   const hostGame = async () => {
-    if (!user || !userData) return;
+    if (!user || !userData || !socketRef.current) return;
     
     const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
     
@@ -294,9 +278,10 @@ export const Game: React.FC = () => {
 
     const map = generateRandomMap(7, initialPlayers);
     const joinCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const newGameId = Math.random().toString(36).substring(2, 15);
     
     let newState: GameState = {
-      id: 'local', // will be overwritten by docRef.id
+      id: newGameId,
       players: initialPlayers,
       map,
       currentTurn: 0,
@@ -304,38 +289,23 @@ export const Game: React.FC = () => {
       joinCode,
     };
 
-    try {
-      const docRef = await addDoc(collection(db, 'games'), {
-        ...newState,
-        lastUpdated: serverTimestamp(),
-      });
-      setGameId(docRef.id);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'games');
-    }
+    socketRef.current.emit('updateGame', newState);
+    setGameId(newGameId);
   };
 
   const joinGame = async (code: string) => {
-    if (!user || !userData) return;
+    if (!user || !userData || !socketRef.current) return;
     setJoinError('');
     
-    try {
-      const gamesRef = collection(db, 'games');
-      const q = query(gamesRef, where('joinCode', '==', code), where('status', '==', 'lobby'));
-      const querySnapshot = await getDocs(q);
-      
-      if (querySnapshot.empty) {
+    socketRef.current.emit('getGameByCode', code, (gameData: GameState | null) => {
+      if (!gameData) {
         setJoinError('Invalid join code or game already started.');
         return;
       }
 
-      const gameDoc = querySnapshot.docs[0];
-      const gameRef = doc(db, 'games', gameDoc.id);
-      const gameData = gameDoc.data() as GameState;
-      
       // Check if already in game
       if (gameData.players.some(p => p.id === user.uid)) {
-        setGameId(gameDoc.id);
+        setGameId(gameData.id);
         return;
       }
 
@@ -353,23 +323,19 @@ export const Game: React.FC = () => {
         stats: { unitsPurchased: 0, goldEarned: 0, tilesClaimed: 0, goldSpent: 0 }
       };
 
-      await updateDoc(gameRef, {
-        players: [...gameData.players, newPlayer],
-        lastUpdated: serverTimestamp()
-      });
+      const newState = {
+        ...gameData,
+        players: [...gameData.players, newPlayer]
+      };
 
-      setGameId(gameDoc.id);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.GET, 'games');
-    }
+      socketRef.current?.emit('updateGame', newState);
+      setGameId(gameData.id);
+    });
   };
-
-  const login = () => signInWithPopup(auth, googleProvider);
-  const logout = () => signOut(auth);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !user) return;
+    if (!file || !user || !userData) return;
 
     if (file.size > 256 * 256 * 4) { // Rough check, better to check dimensions
       alert("File is too large.");
@@ -387,9 +353,12 @@ export const Game: React.FC = () => {
         
         const base64 = event.target?.result as string;
         try {
-          await updateDoc(doc(db, 'users', user.uid), {
-            photoURL: base64
+          await fetch('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...userData, photoURL: base64 })
           });
+          window.location.reload();
         } catch (error) {
           console.error("Error updating photo:", error);
         }
@@ -400,12 +369,15 @@ export const Game: React.FC = () => {
   };
 
   const handleAliasSubmit = async () => {
-    if (!user || !newAlias.trim() || newAlias.trim().length >= 50) return;
+    if (!user || !userData || !newAlias.trim() || newAlias.trim().length >= 50) return;
     try {
-      await updateDoc(doc(db, 'users', user.uid), {
-        alias: newAlias.trim()
+      await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...userData, alias: newAlias.trim() })
       });
       setIsEditingAlias(false);
+      window.location.reload();
     } catch (error) {
       console.error("Error updating alias:", error);
     }
@@ -439,32 +411,27 @@ export const Game: React.FC = () => {
           const playerStats = state.players.find(p => p.id === user.uid)?.stats;
           if (playerStats) {
             const isWin = winId === user.uid;
-            
-            // 1. Create GameStats document
-            addDoc(collection(db, `users/${user.uid}/gameStats`), {
-              gameId: state.id,
-              unitsPurchased: playerStats.unitsPurchased,
-              goldEarned: playerStats.goldEarned,
-              tilesClaimed: playerStats.tilesClaimed,
-              isWin: isWin,
-              timestamp: new Date().toISOString()
-            }).catch(e => console.error("Error saving game stats:", e));
 
-            // 2. Update overall user stats
+            // Update overall user stats
             const currentStats = userData.stats || {
               wins: 0, losses: 0, gamesPlayed: 0, 
               totalGoldSpent: 0, totalGoldEarned: 0, totalTilesClaimed: 0
             };
             
-            updateDoc(doc(db, 'users', user.uid), {
-              stats: {
-                wins: currentStats.wins + (isWin ? 1 : 0),
-                losses: currentStats.losses + (isWin ? 0 : 1),
-                gamesPlayed: currentStats.gamesPlayed + 1,
-                totalGoldSpent: currentStats.totalGoldSpent + playerStats.goldSpent,
-                totalGoldEarned: currentStats.totalGoldEarned + playerStats.goldEarned,
-                totalTilesClaimed: currentStats.totalTilesClaimed + playerStats.tilesClaimed
-              }
+            fetch('/api/users', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                ...userData,
+                stats: {
+                  wins: currentStats.wins + (isWin ? 1 : 0),
+                  losses: currentStats.losses + (isWin ? 0 : 1),
+                  gamesPlayed: currentStats.gamesPlayed + 1,
+                  totalGoldSpent: currentStats.totalGoldSpent + playerStats.goldSpent,
+                  totalGoldEarned: currentStats.totalGoldEarned + playerStats.goldEarned,
+                  totalTilesClaimed: currentStats.totalTilesClaimed + playerStats.tilesClaimed
+                }
+              })
             }).catch(e => console.error("Error updating overall stats:", e));
           }
         }
@@ -522,29 +489,25 @@ export const Game: React.FC = () => {
       // Record loss immediately
       const playerStats = newState.players[pIndex].stats;
       if (playerStats) {
-        addDoc(collection(db, `users/${user.uid}/gameStats`), {
-          gameId: state.id,
-          unitsPurchased: playerStats.unitsPurchased,
-          goldEarned: playerStats.goldEarned,
-          tilesClaimed: playerStats.tilesClaimed,
-          isWin: false,
-          timestamp: new Date().toISOString()
-        }).catch(e => console.error("Error saving game stats:", e));
-
         const currentStats = userData.stats || {
           wins: 0, losses: 0, gamesPlayed: 0, 
           totalGoldSpent: 0, totalGoldEarned: 0, totalTilesClaimed: 0
         };
         
-        updateDoc(doc(db, 'users', user.uid), {
-          stats: {
-            wins: currentStats.wins,
-            losses: currentStats.losses + 1,
-            gamesPlayed: currentStats.gamesPlayed + 1,
-            totalGoldSpent: currentStats.totalGoldSpent + playerStats.goldSpent,
-            totalGoldEarned: currentStats.totalGoldEarned + playerStats.goldEarned,
-            totalTilesClaimed: currentStats.totalTilesClaimed + playerStats.tilesClaimed
-          }
+        fetch('/api/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...userData,
+            stats: {
+              wins: currentStats.wins,
+              losses: currentStats.losses + 1,
+              gamesPlayed: currentStats.gamesPlayed + 1,
+              totalGoldSpent: currentStats.totalGoldSpent + playerStats.goldSpent,
+              totalGoldEarned: currentStats.totalGoldEarned + playerStats.goldEarned,
+              totalTilesClaimed: currentStats.totalTilesClaimed + playerStats.tilesClaimed
+            }
+          })
         }).catch(e => console.error("Error updating overall stats:", e));
       }
       
@@ -648,7 +611,7 @@ export const Game: React.FC = () => {
                   <button onClick={() => setIsStatsModalOpen(true)} className="p-2 text-slate-400 hover:text-blue-400 transition-colors rounded-lg hover:bg-slate-700/50">
                     <ChartNoAxesCombined size={24} />
                   </button>
-                  <button onClick={logout} className="p-2 text-slate-400 hover:text-red-400 transition-colors rounded-lg hover:bg-slate-700/50">
+                  <button onClick={signOut} className="p-2 text-slate-400 hover:text-red-400 transition-colors rounded-lg hover:bg-slate-700/50">
                     <LogOut size={24} />
                   </button>
                 </div>
@@ -792,15 +755,11 @@ export const Game: React.FC = () => {
     };
 
     const closeLobby = async () => {
-      if (!isHost || !gameId) return;
-      try {
-        await deleteDoc(doc(db, 'games', gameId));
-        setGameId(null);
-        setState(null);
-        setShowCloseLobbyConfirm(false);
-      } catch (error) {
-        handleFirestoreError(error, OperationType.DELETE, `games/${gameId}`);
-      }
+      if (!isHost || !gameId || !socketRef.current) return;
+      socketRef.current.emit('updateGame', { ...state, status: 'closed' });
+      setGameId(null);
+      setState(null);
+      setShowCloseLobbyConfirm(false);
     };
 
     return (
@@ -875,14 +834,9 @@ export const Game: React.FC = () => {
               </div>
               <button 
                 onClick={async () => {
-                  if (gameId && user) {
-                    try {
-                      const gameRef = doc(db, 'games', gameId);
-                      const newPlayers = state.players.filter(p => p.id !== user.uid);
-                      await updateDoc(gameRef, { players: newPlayers });
-                    } catch (error) {
-                      handleFirestoreError(error, OperationType.UPDATE, `games/${gameId}`);
-                    }
+                  if (gameId && user && socketRef.current) {
+                    const newPlayers = state.players.filter(p => p.id !== user.uid);
+                    socketRef.current.emit('updateGame', { ...state, players: newPlayers });
                   }
                   setGameId(null);
                   setState(null);
@@ -930,7 +884,7 @@ export const Game: React.FC = () => {
             <ChartNoAxesCombined size={20} />
           </button>
           <button 
-            onClick={() => auth.signOut()}
+            onClick={signOut}
             className="p-3 bg-slate-900/80 backdrop-blur-md border border-slate-700 rounded-full hover:bg-slate-800 transition-colors shadow-xl text-slate-400 hover:text-white"
             title="Sign Out"
           >
@@ -1057,7 +1011,7 @@ export const Game: React.FC = () => {
     }
 
     // Select a unit to move
-    if (hex.ownerId === currentPlayer.id && hex.unit && hex.unit !== 'Town' && hex.unit !== 'Tower' && !hex.hasMoved) {
+    if (hex.ownerId === currentPlayer.id && hex.unit && !['Town', 'Tower', 'Tree', 'Grave'].includes(hex.unit) && !hex.hasMoved) {
       setSelectedHex(key);
       const attackerLevel = UNIT_STATS[hex.unit as keyof typeof UNIT_STATS]?.level || 0;
       const reachable = getReachableHexes(key, state.map, currentPlayer.id, attackerLevel);
