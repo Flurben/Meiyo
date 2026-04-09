@@ -1,14 +1,27 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
-import { createServer } from "http";
+import { createServer as createHttpServer } from "http";
+import { createServer as createHttpsServer } from "https";
+import fs from "fs";
 import { Server } from "socket.io";
 import { getUser, saveUser, getGame, getGameByJoinCode, saveGame } from "./src/server/db.js";
 
 async function startServer() {
   const app = express();
   const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
-  const httpServer = createServer(app);
+  
+  let httpServer;
+  if (process.env.NODE_ENV === "production") {
+    const options = {
+      key: fs.readFileSync('./letsencrypt-meiyo/privkey.pem'),
+      cert: fs.readFileSync('./letsencrypt-meiyo/cert.pem'),
+    };
+    httpServer = createHttpsServer(options, app);
+  } else {
+    httpServer = createHttpServer(app);
+  }
+
   const io = new Server(httpServer, {
     cors: { origin: "*" }
   });
@@ -64,7 +77,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = process.cwd();
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
@@ -72,7 +85,8 @@ async function startServer() {
   }
 
   httpServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
+    const protocol = process.env.NODE_ENV === "production" ? "https" : "http";
+    console.log(`Server running on ${protocol}://0.0.0.0:${PORT}`);
   });
 }
 
