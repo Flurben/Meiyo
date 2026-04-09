@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
@@ -71,15 +72,20 @@ async function startServer() {
     });
   });
 
-  // Vite middleware for development
-  if (!isProduction) {
+  // Vite middleware for development or if dist doesn't exist
+  const distPath = path.join(process.cwd(), 'dist');
+  const hasDist = fs.existsSync(distPath);
+
+  if (!isProduction || !hasDist) {
+    if (isProduction && !hasDist) {
+      console.warn("WARNING: Running in production mode but 'dist' folder not found. Falling back to Vite middleware (slower). Please run 'npm run build'.");
+    }
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = process.cwd();
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
