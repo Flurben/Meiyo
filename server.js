@@ -13,7 +13,8 @@ async function startServer() {
   const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
   
   const isProduction = process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
-  
+  console.log("Running in Production: " + isProduction)
+
   let httpServer;
   if (isProduction) {
     const options = {
