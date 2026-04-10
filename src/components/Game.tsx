@@ -39,9 +39,10 @@ import { io, Socket } from 'socket.io-client';
 import { runAITurnAsync } from '../game/ai';
 import { AuthModal } from './AuthModal';
 import { StatsModal } from './StatsModal';
+import { ProfilePhotoModal } from './ProfilePhotoModal';
 
 export const Game: React.FC = () => {
-  const { user, userData, loading: authLoading, isAuthReady, signOut } = useAuth();
+  const { user, userData, loading: authLoading, isAuthReady, signOut, updateUser } = useAuth();
   const [state, setState] = useState<GameState | null>(null);
   const [selectedHex, setSelectedHex] = useState<string | null>(null);
   const [radialMenu, setRadialMenu] = useState<{ x: number, y: number, hexKey: string } | null>(null);
@@ -57,13 +58,13 @@ export const Game: React.FC = () => {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'signin' | 'signup'>('signin');
   const [isStatsModalOpen, setIsStatsModalOpen] = useState(false);
+  const [isProfilePhotoModalOpen, setIsProfilePhotoModalOpen] = useState(false);
   const [isEditingAlias, setIsEditingAlias] = useState(false);
   const [newAlias, setNewAlias] = useState('');
   const [joinCodeInput, setJoinCodeInput] = useState('');
   const [joinError, setJoinError] = useState('');
   const [showCloseLobbyConfirm, setShowCloseLobbyConfirm] = useState(false);
   const [surrenderNotifications, setSurrenderNotifications] = useState<{id: string, message: string}[]>([]);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const stateRef = useRef(state);
   const socketRef = useRef<Socket | null>(null);
@@ -79,6 +80,15 @@ export const Game: React.FC = () => {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!user && state) {
+      // If user signs out, kick them to menu
+      setState(null);
+      setGameId(null);
+      setWinner(null);
+    }
+  }, [user]);
 
   useEffect(() => {
     if (state && stateRef.current) {
@@ -339,51 +349,11 @@ export const Game: React.FC = () => {
     });
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !user || !userData) return;
-
-    if (file.size > 256 * 256 * 4) { // Rough check, better to check dimensions
-      alert("File is too large.");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const img = new Image();
-      img.onload = async () => {
-        if (img.width > 256 || img.height > 256) {
-          alert("Image must be 256x256 pixels or smaller.");
-          return;
-        }
-        
-        const base64 = event.target?.result as string;
-        try {
-          await fetch('/api/users', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...userData, photoURL: base64 })
-          });
-          window.location.reload();
-        } catch (error) {
-          console.error("Error updating photo:", error);
-        }
-      };
-      img.src = event.target?.result as string;
-    };
-    reader.readAsDataURL(file);
-  };
-
   const handleAliasSubmit = async () => {
     if (!user || !userData || !newAlias.trim() || newAlias.trim().length >= 50) return;
     try {
-      await fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...userData, alias: newAlias.trim() })
-      });
+      await updateUser({ alias: newAlias.trim() });
       setIsEditingAlias(false);
-      window.location.reload();
     } catch (error) {
       console.error("Error updating alias:", error);
     }
@@ -407,15 +377,16 @@ export const Game: React.FC = () => {
   };
 
   useEffect(() => {
-    if (state && state.status === 'playing') {
-      const winId = checkWinner(state);
+    if (state && state.status === 'finished') {
+      const winId = state.winnerId || checkWinner(state);
       if (winId && !winner) {
         setWinner(winId);
         
         // Save stats if user is logged in
         if (user && userData) {
-          const playerStats = state.players.find(p => p.id === user.uid)?.stats;
-          if (playerStats) {
+          const localPlayer = state.players.find(p => p.id === user.uid);
+          const playerStats = localPlayer?.stats;
+          if (playerStats && !localPlayer?.hasSurrendered) {
             const isWin = winId === user.uid;
 
             // Update overall user stats
@@ -424,20 +395,15 @@ export const Game: React.FC = () => {
               totalGoldSpent: 0, totalGoldEarned: 0, totalTilesClaimed: 0
             };
             
-            fetch('/api/users', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                ...userData,
-                stats: {
-                  wins: currentStats.wins + (isWin ? 1 : 0),
-                  losses: currentStats.losses + (isWin ? 0 : 1),
-                  gamesPlayed: currentStats.gamesPlayed + 1,
-                  totalGoldSpent: currentStats.totalGoldSpent + playerStats.goldSpent,
-                  totalGoldEarned: currentStats.totalGoldEarned + playerStats.goldEarned,
-                  totalTilesClaimed: currentStats.totalTilesClaimed + playerStats.tilesClaimed
-                }
-              })
+            updateUser({
+              stats: {
+                wins: currentStats.wins + (isWin ? 1 : 0),
+                losses: currentStats.losses + (isWin ? 0 : 1),
+                gamesPlayed: currentStats.gamesPlayed + 1,
+                totalGoldSpent: currentStats.totalGoldSpent + playerStats.goldSpent,
+                totalGoldEarned: currentStats.totalGoldEarned + playerStats.goldEarned,
+                totalTilesClaimed: currentStats.totalTilesClaimed + playerStats.tilesClaimed
+              }
             }).catch(e => console.error("Error updating overall stats:", e));
           }
         }
@@ -515,20 +481,15 @@ export const Game: React.FC = () => {
           totalGoldSpent: 0, totalGoldEarned: 0, totalTilesClaimed: 0
         };
         
-        fetch('/api/users', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...userData,
-            stats: {
-              wins: currentStats.wins,
-              losses: currentStats.losses + 1,
-              gamesPlayed: currentStats.gamesPlayed + 1,
-              totalGoldSpent: currentStats.totalGoldSpent + playerStats.goldSpent,
-              totalGoldEarned: currentStats.totalGoldEarned + playerStats.goldEarned,
-              totalTilesClaimed: currentStats.totalTilesClaimed + playerStats.tilesClaimed
-            }
-          })
+        updateUser({
+          stats: {
+            wins: currentStats.wins,
+            losses: currentStats.losses + 1,
+            gamesPlayed: currentStats.gamesPlayed + 1,
+            totalGoldSpent: currentStats.totalGoldSpent + playerStats.goldSpent,
+            totalGoldEarned: currentStats.totalGoldEarned + playerStats.goldEarned,
+            totalTilesClaimed: currentStats.totalTilesClaimed + playerStats.tilesClaimed
+          }
         }).catch(e => console.error("Error updating overall stats:", e));
       }
       
@@ -584,7 +545,7 @@ export const Game: React.FC = () => {
             <Swords size={70} className="text-white" />
           </div>
           <h1 className="text-3xl font-black text-white mb-1">Meiyo</h1>
-          <h1 className="text-1xl text-white mb-2">v0.24</h1>
+          <h1 className="text-1xl text-white mb-2">v0.25</h1>
           <p className="text-slate-200 mb-8 leading-relaxed">
             Conquer the land, manage your economy, and outsmart your opponents in this hexagonal strategy game.
           </p>
@@ -595,7 +556,7 @@ export const Game: React.FC = () => {
                 <div className="flex items-center gap-3">
                   <div 
                     className="relative w-12 h-12 rounded-full border-2 border-slate-600 overflow-hidden group cursor-pointer"
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={() => setIsProfilePhotoModalOpen(true)}
                   >
                     {userData.photoURL ? (
                       <img src={userData.photoURL} alt="" className="w-full h-full object-cover" />
@@ -608,13 +569,6 @@ export const Game: React.FC = () => {
                       <SquarePen size={20} className="text-white" />
                     </div>
                   </div>
-                  <input 
-                    type="file" 
-                    ref={fileInputRef} 
-                    className="hidden" 
-                    accept="image/jpeg, image/png"
-                    onChange={handleImageUpload}
-                  />
                   <div className="text-left">
                     {isEditingAlias ? (
                       <div className="flex items-center gap-2">
@@ -769,6 +723,10 @@ export const Game: React.FC = () => {
           isOpen={isStatsModalOpen} 
           onClose={() => setIsStatsModalOpen(false)} 
         />
+        <ProfilePhotoModal
+          isOpen={isProfilePhotoModalOpen}
+          onClose={() => setIsProfilePhotoModalOpen(false)}
+        />
       </div>
     );
   }
@@ -897,10 +855,16 @@ export const Game: React.FC = () => {
           isOpen={isStatsModalOpen} 
           onClose={() => setIsStatsModalOpen(false)} 
         />
+        <ProfilePhotoModal
+          isOpen={isProfilePhotoModalOpen}
+          onClose={() => setIsProfilePhotoModalOpen(false)}
+        />
         <div className="absolute top-6 right-6 z-50 flex items-center gap-4">
           {user && userData && (
             <div className="flex items-center gap-3 bg-slate-900/80 backdrop-blur-md border border-slate-700 p-2 pr-4 rounded-full shadow-xl">
-              <div className="w-10 h-10 rounded-full overflow-hidden bg-slate-800 border-2 border-slate-600">
+              <div 
+                className="w-10 h-10 rounded-full overflow-hidden bg-slate-800 border-2 border-slate-600"
+              >
                 {userData.photoURL ? (
                   <img src={userData.photoURL} alt="Profile" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 ) : (
@@ -921,13 +885,6 @@ export const Game: React.FC = () => {
             title="Statistics"
           >
             <ChartNoAxesCombined size={20} />
-          </button>
-          <button 
-            onClick={signOut}
-            className="p-3 bg-slate-900/80 backdrop-blur-md border border-slate-700 rounded-full hover:bg-slate-800 transition-colors shadow-xl text-slate-400 hover:text-white"
-            title="Sign Out"
-          >
-            <LogOut size={20} />
           </button>
         </div>
       </div>
@@ -1039,7 +996,13 @@ export const Game: React.FC = () => {
 
             newState.map[selectedHex].unit = null;
           }
-          const finalState = updateTerritories(newState, state);
+          let finalState = updateTerritories(newState, state);
+          const winId = checkWinner(finalState);
+          if (winId) {
+            finalState.status = 'finished';
+            finalState.winnerId = winId;
+            setWinner(winId);
+          }
           updateGameState(finalState);
           stateRef.current = finalState;
         }
@@ -1322,23 +1285,39 @@ export const Game: React.FC = () => {
           onHexHover={handleHexHover}
         />
 
-        {winner && (
+        {(winner || state.players.find(p => p.id === user?.uid)?.hasSurrendered) && (
           <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50">
             <motion.div 
               initial={{ scale: 0.8, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               className="bg-slate-900 p-12 rounded-3xl border border-slate-800 text-center shadow-2xl"
             >
-              <Trophy size={80} className="text-yellow-400 mx-auto mb-6" />
-              <h1 className="text-4xl font-black mb-2">Victory!</h1>
-              <p className="text-xl text-slate-400 mb-8">
-                {state.players.find(p => p.id === winner)?.name} has conquered the land.
-              </p>
+              {state.players.find(p => p.id === user?.uid)?.hasSurrendered ? (
+                <>
+                  <Flag size={80} className="text-red-400 mx-auto mb-6" />
+                  <h1 className="text-4xl font-black mb-2">Surrendered</h1>
+                  <p className="text-xl text-slate-400 mb-8">
+                    You have surrendered the match.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <Trophy size={80} className="text-yellow-400 mx-auto mb-6" />
+                  <h1 className="text-4xl font-black mb-2">Victory!</h1>
+                  <p className="text-xl text-slate-400 mb-8">
+                    {state.players.find(p => p.id === winner)?.name} has conquered the land.
+                  </p>
+                </>
+              )}
               <button 
-                onClick={() => window.location.reload()}
+                onClick={() => {
+                  setState(null);
+                  setGameId(null);
+                  setWinner(null);
+                }}
                 className="bg-blue-600 hover:bg-blue-500 px-8 py-3 rounded-xl font-bold transition-colors"
               >
-                Play Again
+                Return
               </button>
             </motion.div>
           </div>
@@ -1354,6 +1333,11 @@ export const Game: React.FC = () => {
       <StatsModal 
         isOpen={isStatsModalOpen} 
         onClose={() => setIsStatsModalOpen(false)} 
+      />
+
+      <ProfilePhotoModal
+        isOpen={isProfilePhotoModalOpen}
+        onClose={() => setIsProfilePhotoModalOpen(false)}
       />
 
       {/* Notifications */}

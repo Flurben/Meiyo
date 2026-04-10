@@ -98,7 +98,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('meiyo_uid');
     setUser(null);
     setUserData(null);
-    window.location.reload();
   };
 
   return (
