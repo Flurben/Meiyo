@@ -121,6 +121,9 @@ export const Game: React.FC = () => {
         if (shouldUpdate) {
           setState(data);
           stateRef.current = data;
+          if (data.status === 'finished' && data.winnerId) {
+            setWinner(data.winnerId);
+          }
         }
       };
 
@@ -261,12 +264,14 @@ export const Game: React.FC = () => {
       setGameId(newGameId);
     }
 
+    setWinner(null);
     setState(newState);
   };
 
   const hostGame = async () => {
     if (!user || !userData || !socketRef.current) return;
     
+    setWinner(null);
     const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
     
     const initialPlayers: Player[] = [{
@@ -315,6 +320,7 @@ export const Game: React.FC = () => {
         return;
       }
 
+      setWinner(null);
       const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
       const newPlayer: Player = {
         id: user.uid,
@@ -486,6 +492,21 @@ export const Game: React.FC = () => {
     if (pIndex !== -1) {
       newState.players[pIndex].hasSurrendered = true;
       
+      // Clear their tiles and units
+      Object.keys(newState.map).forEach(key => {
+        if (newState.map[key].ownerId === user.uid) {
+          newState.map[key].ownerId = null;
+          if (newState.map[key].unit !== 'Tree' && newState.map[key].unit !== 'Grave') {
+            newState.map[key].unit = null;
+          }
+          newState.map[key].isCapital = false;
+          newState.map[key].gold = 0;
+          newState.map[key].canMove = false;
+        }
+      });
+      
+      newState.map = updateTerritories(newState);
+      
       // Record loss immediately
       const playerStats = newState.players[pIndex].stats;
       if (playerStats) {
@@ -527,6 +548,24 @@ export const Game: React.FC = () => {
       if (winId) {
         newState.status = 'finished';
         newState.winnerId = winId;
+        setWinner(winId);
+      } else if (!newState.players.some(p => !p.isAI && !p.hasSurrendered)) {
+        // If all human players have surrendered, end the game
+        newState.status = 'finished';
+        // Find the AI with the most tiles
+        let maxTiles = -1;
+        let bestAI = null;
+        newState.players.forEach(p => {
+          if (!p.hasSurrendered) {
+            const tiles = Object.values(newState.map).filter(h => h.ownerId === p.id).length;
+            if (tiles > maxTiles) {
+              maxTiles = tiles;
+              bestAI = p.id;
+            }
+          }
+        });
+        newState.winnerId = bestAI || undefined;
+        if (bestAI) setWinner(bestAI);
       }
       
       await updateGameState(newState);
@@ -545,7 +584,7 @@ export const Game: React.FC = () => {
             <Swords size={70} className="text-white" />
           </div>
           <h1 className="text-3xl font-black text-white mb-1">Meiyo</h1>
-          <h1 className="text-1xl text-white mb-2">v0.23</h1>
+          <h1 className="text-1xl text-white mb-2">v0.24</h1>
           <p className="text-slate-200 mb-8 leading-relaxed">
             Conquer the land, manage your economy, and outsmart your opponents in this hexagonal strategy game.
           </p>

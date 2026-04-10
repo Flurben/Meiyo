@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, User, Lock, Type } from 'lucide-react';
-import { auth, db, handleFirestoreError, OperationType } from '../firebase';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { useAuth } from '../AuthProvider';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -19,6 +17,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const { setAuthData } = useAuth();
 
   // Reset state when mode changes
   React.useEffect(() => {
@@ -39,8 +38,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
     setError('');
     setLoading(true);
 
-    const email = `${username.toLowerCase()}@meiyo.local`;
-
     try {
       if (mode === 'signup') {
         if (password !== confirmPassword) {
@@ -53,47 +50,44 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
           throw new Error("Alias is required.");
         }
 
-        // Create user
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        const user = userCredential.user;
-
-        // Update profile
-        await updateProfile(user, {
-          displayName: username
+        const res = await fetch('/api/auth/signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password, alias })
         });
-
-        // Create user document in Firestore
-        const userRef = doc(db, 'users', user.uid);
-        await setDoc(userRef, {
-          uid: user.uid,
-          displayName: username,
-          alias: alias,
-          email: email,
-          photoURL: '',
-          stats: {
-            wins: 0,
-            losses: 0,
-            gamesPlayed: 0,
-            totalGoldSpent: 0,
-            totalGoldEarned: 0,
-            totalTilesClaimed: 0
-          }
+        
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Signup failed");
+        
+        setAuthData(data.id, {
+          uid: data.id,
+          displayName: data.alias,
+          alias: data.alias,
+          photoURL: data.photoURL,
+          stats: data.stats
         });
-
       } else {
-        // Sign in
-        await signInWithEmailAndPassword(auth, email, password);
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Login failed");
+        
+        setAuthData(data.id, {
+          uid: data.id,
+          displayName: data.alias,
+          alias: data.alias,
+          photoURL: data.photoURL,
+          stats: data.stats
+        });
       }
       onClose();
     } catch (err: any) {
       console.error(err);
-      if (err.code === 'auth/email-already-in-use') {
-        setError('Username is already taken.');
-      } else if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
-        setError('Invalid username or password.');
-      } else {
-        setError(err.message || 'An error occurred.');
-      }
+      setError(err.message || 'An error occurred.');
     } finally {
       setLoading(false);
     }

@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { v4 as uuidv4 } from 'uuid';
 
 interface UserData {
   uid: string;
@@ -16,6 +15,7 @@ interface AuthContextType {
   isAuthReady: boolean;
   updateUser: (data: Partial<UserData>) => Promise<void>;
   signOut: () => void;
+  setAuthData: (uid: string, data: UserData) => void;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -25,6 +25,7 @@ const AuthContext = createContext<AuthContextType>({
   isAuthReady: false,
   updateUser: async () => {},
   signOut: () => {},
+  setAuthData: () => {},
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -37,10 +38,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const initAuth = async () => {
-      let uid = localStorage.getItem('meiyo_uid');
+      const uid = localStorage.getItem('meiyo_uid');
       if (!uid) {
-        uid = uuidv4();
-        localStorage.setItem('meiyo_uid', uid);
+        setLoading(false);
+        setIsAuthReady(true);
+        return;
       }
 
       try {
@@ -54,30 +56,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             photoURL: data.photoURL,
             stats: data.stats
           });
+          setUser({ uid });
         } else {
-          const newUser = {
-            id: uid,
-            alias: 'Player ' + Math.floor(Math.random() * 1000),
-            photoURL: '',
-            stats: {
-              wins: 0, losses: 0, gamesPlayed: 0,
-              totalGoldSpent: 0, totalGoldEarned: 0, totalTilesClaimed: 0
-            }
-          };
-          await fetch('/api/users', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(newUser)
-          });
-          setUserData({
-            uid: newUser.id,
-            displayName: newUser.alias,
-            alias: newUser.alias,
-            photoURL: newUser.photoURL,
-            stats: newUser.stats
-          });
+          // User not found in DB, clear local storage
+          localStorage.removeItem('meiyo_uid');
         }
-        setUser({ uid });
       } catch (error) {
         console.error("Auth error:", error);
       } finally {
@@ -105,6 +88,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
+  const setAuthData = (uid: string, data: UserData) => {
+    localStorage.setItem('meiyo_uid', uid);
+    setUser({ uid });
+    setUserData(data);
+  };
+
   const signOut = () => {
     localStorage.removeItem('meiyo_uid');
     setUser(null);
@@ -113,7 +102,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, userData, loading, isAuthReady, updateUser, signOut }}>
+    <AuthContext.Provider value={{ user, userData, loading, isAuthReady, updateUser, signOut, setAuthData }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,8 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Trophy, Swords, Coins, Hexagon } from 'lucide-react';
-import { db } from '../firebase';
-import { doc, getDoc } from 'firebase/firestore';
 import { useAuth } from '../AuthProvider';
 
 interface StatsModalProps {
@@ -11,7 +9,7 @@ interface StatsModalProps {
 }
 
 export const StatsModal: React.FC<StatsModalProps> = ({ isOpen, onClose }) => {
-  const { user } = useAuth();
+  const { user, userData } = useAuth();
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
@@ -20,9 +18,10 @@ export const StatsModal: React.FC<StatsModalProps> = ({ isOpen, onClose }) => {
       setLoading(true);
       const fetchStats = async () => {
         try {
-          const userDoc = await getDoc(doc(db, 'users', user.uid));
-          if (userDoc.exists()) {
-            setStats(userDoc.data().stats);
+          const res = await fetch(`/api/users/${user.uid}`);
+          if (res.ok) {
+            const data = await res.json();
+            setStats(data.stats);
           }
         } catch (error) {
           console.error("Error fetching stats:", error);
