@@ -6,19 +6,24 @@ import { useAuth } from '../AuthProvider';
 interface StatsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  userId?: string;
+  userName?: string;
 }
 
-export const StatsModal: React.FC<StatsModalProps> = ({ isOpen, onClose }) => {
+export const StatsModal: React.FC<StatsModalProps> = ({ isOpen, onClose, userId, userName }) => {
   const { user, userData } = useAuth();
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
+  const targetUserId = userId || user?.uid;
+  const targetUserName = userName || userData?.alias || user?.displayName || 'Player';
+
   useEffect(() => {
-    if (isOpen && user) {
+    if (isOpen && targetUserId) {
       setLoading(true);
       const fetchStats = async () => {
         try {
-          const res = await fetch(`/api/users/${user.uid}`);
+          const res = await fetch(`/api/users/${targetUserId}`);
           if (res.ok) {
             const data = await res.json();
             setStats(data.stats);
@@ -31,7 +36,7 @@ export const StatsModal: React.FC<StatsModalProps> = ({ isOpen, onClose }) => {
       };
       fetchStats();
     }
-  }, [isOpen, user]);
+  }, [isOpen, targetUserId]);
 
   if (!isOpen) return null;
 
@@ -58,7 +63,7 @@ export const StatsModal: React.FC<StatsModalProps> = ({ isOpen, onClose }) => {
           <div className="p-8">
             <h2 className="text-2xl font-black text-white mb-6 text-center flex items-center justify-center gap-3">
               <Trophy className="text-yellow-400" />
-              Your Statistics
+              {targetUserName}'s Statistics
             </h2>
 
             {loading ? (

@@ -115,7 +115,7 @@ async function startServer() {
 
     socket.on("updateGame", (gameState) => {
       saveGame(gameState);
-      io.to(gameState.id).emit("gameState", gameState);
+      socket.to(gameState.id).emit("gameState", gameState);
     });
 
     socket.on("getGameByCode", (joinCode, callback) => {

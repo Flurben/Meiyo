@@ -7,6 +7,8 @@ export interface Player {
   color: string;
   isAI?: boolean;
   hasSurrendered?: boolean;
+  photoURL?: string;
+  overallStats?: any;
   stats?: {
     unitsPurchased: number;
     goldEarned: number;

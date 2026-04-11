@@ -41,10 +41,10 @@ export class ErrorBoundary extends Component<Props, State> {
             <h2 className="text-2xl font-bold text-red-500 mb-4">Something went wrong</h2>
             <p className="text-slate-400 mb-6">{errorMessage}</p>
             <button
-              onClick={() => window.location.reload()}
+              onClick={() => { window.location.href = '/'; }}
               className="bg-red-600 hover:bg-red-500 px-6 py-2 rounded-xl font-bold transition-all"
             >
-              Reload Application
+              Return to Main Menu
             </button>
           </div>
         </div>

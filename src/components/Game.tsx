@@ -58,6 +58,7 @@ export const Game: React.FC = () => {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'signin' | 'signup'>('signin');
   const [isStatsModalOpen, setIsStatsModalOpen] = useState(false);
+  const [selectedStatsPlayer, setSelectedStatsPlayer] = useState<{id: string, name: string} | null>(null);
   const [isProfilePhotoModalOpen, setIsProfilePhotoModalOpen] = useState(false);
   const [isEditingAlias, setIsEditingAlias] = useState(false);
   const [newAlias, setNewAlias] = useState('');
@@ -116,24 +117,27 @@ export const Game: React.FC = () => {
       socketRef.current.emit('joinGame', gameId);
       
       const handleGameState = (data: GameState) => {
-        const remoteTurnId = data.players[data.currentTurn].id;
-        const localTurnId = stateRef.current?.players[stateRef.current?.currentTurn]?.id;
-        
-        const isHost = user?.uid === data.players[0].id;
-        const isAITurn = data.players[data.currentTurn].isAI;
-        
-        const shouldUpdate = 
-          data.status === 'lobby' ||
-          (remoteTurnId !== user?.uid && !(isAITurn && isHost)) || 
-          (remoteTurnId === user?.uid && localTurnId !== user?.uid) || 
-          !stateRef.current;
+        // Check for new surrenders
+        if (stateRef.current) {
+          data.players.forEach((p, i) => {
+            const oldP = stateRef.current?.players[i];
+            if (p.hasSurrendered && oldP && !oldP.hasSurrendered && p.id !== user?.uid) {
+              const id = Math.random().toString(36).substring(7);
+              setSurrenderNotifications(prev => [...prev, { id, message: `${p.name} has surrendered.` }]);
+              setTimeout(() => {
+                setSurrenderNotifications(prev => prev.filter(n => n.id !== id));
+              }, 5000);
+            }
+          });
+        }
 
-        if (shouldUpdate) {
-          setState(data);
-          stateRef.current = data;
-          if (data.status === 'finished' && data.winnerId) {
-            setWinner(data.winnerId);
-          }
+        // We always accept state updates from the server now,
+        // because socket.to() prevents echoing back to the sender.
+        // This fixes race conditions and surrender bugs.
+        setState(data);
+        stateRef.current = data;
+        if (data.status === 'finished' && data.winnerId) {
+          setWinner(data.winnerId);
         }
       };
 
@@ -192,7 +196,35 @@ export const Game: React.FC = () => {
               await new Promise(resolve => setTimeout(resolve, 300));
             });
             
-            const nextState = _.cloneDeep(aiProcessedState);
+            let nextState = _.cloneDeep(aiProcessedState);
+            
+            // Merge any surrenders that happened during the AI turn
+            const currentStateNow = stateRef.current;
+            if (currentStateNow) {
+              let surrenderChanged = false;
+              currentStateNow.players.forEach((p, i) => {
+                if (p.hasSurrendered && !nextState.players[i].hasSurrendered) {
+                  nextState.players[i].hasSurrendered = true;
+                  surrenderChanged = true;
+                  // Clear their tiles
+                  Object.keys(nextState.map).forEach(key => {
+                    if (nextState.map[key].ownerId === p.id) {
+                      nextState.map[key].ownerId = null;
+                      if (nextState.map[key].unit !== 'Tree' && nextState.map[key].unit !== 'Grave') {
+                        nextState.map[key].unit = null;
+                      }
+                      nextState.map[key].isCapital = false;
+                      nextState.map[key].gold = 0;
+                      nextState.map[key].hasMoved = false;
+                    }
+                  });
+                }
+              });
+              if (surrenderChanged) {
+                nextState = updateTerritories(nextState);
+              }
+            }
+
             let loopCount = 0;
             do {
               nextState.currentTurn = (nextState.currentTurn + 1) % nextState.players.length;
@@ -237,8 +269,10 @@ export const Game: React.FC = () => {
     // Add human player
     initialPlayers.push({
       id: user?.uid || '1',
-      name: user?.displayName || 'Player 1',
+      name: userData?.alias || user?.displayName || 'Player 1',
       color: colors[0],
+      photoURL: userData?.photoURL,
+      overallStats: userData?.stats,
       stats: { unitsPurchased: 0, goldEarned: 0, tilesClaimed: 0, goldSpent: 0 }
     });
 
@@ -336,6 +370,8 @@ export const Game: React.FC = () => {
         id: user.uid,
         name: userData.alias || user.displayName || `Player ${gameData.players.length + 1}`,
         color: colors[gameData.players.length % colors.length],
+        photoURL: userData.photoURL,
+        overallStats: userData.stats,
         stats: { unitsPurchased: 0, goldEarned: 0, tilesClaimed: 0, goldSpent: 0 }
       };
 
@@ -467,11 +503,11 @@ export const Game: React.FC = () => {
           }
           newState.map[key].isCapital = false;
           newState.map[key].gold = 0;
-          newState.map[key].canMove = false;
+          newState.map[key].hasMoved = false;
         }
       });
       
-      newState.map = updateTerritories(newState);
+      newState = updateTerritories(newState);
       
       // Record loss immediately
       const playerStats = newState.players[pIndex].stats;
@@ -518,7 +554,7 @@ export const Game: React.FC = () => {
         let bestAI = null;
         newState.players.forEach(p => {
           if (!p.hasSurrendered) {
-            const tiles = Object.values(newState.map).filter(h => h.ownerId === p.id).length;
+            const tiles = Object.values(newState.map).filter((h: any) => h.ownerId === p.id).length;
             if (tiles > maxTiles) {
               maxTiles = tiles;
               bestAI = p.id;
@@ -545,7 +581,7 @@ export const Game: React.FC = () => {
             <Swords size={70} className="text-white" />
           </div>
           <h1 className="text-3xl font-black text-white mb-1">Meiyo</h1>
-          <h1 className="text-1xl text-white mb-2">v0.25</h1>
+          <h1 className="text-1xl text-white mb-2">v0.26</h1>
           <p className="text-slate-200 mb-8 leading-relaxed">
             Conquer the land, manage your economy, and outsmart your opponents in this hexagonal strategy game.
           </p>
@@ -721,7 +757,12 @@ export const Game: React.FC = () => {
         />
         <StatsModal 
           isOpen={isStatsModalOpen} 
-          onClose={() => setIsStatsModalOpen(false)} 
+          onClose={() => {
+            setIsStatsModalOpen(false);
+            setSelectedStatsPlayer(null);
+          }}
+          userId={selectedStatsPlayer?.id}
+          userName={selectedStatsPlayer?.name}
         />
         <ProfilePhotoModal
           isOpen={isProfilePhotoModalOpen}
@@ -782,9 +823,29 @@ export const Game: React.FC = () => {
             <div className="space-y-2">
               {state.players.map((p, i) => (
                 <div key={p.id} className="flex items-center gap-3 bg-slate-800 p-3 rounded-xl border border-slate-700">
-                  <div className="w-4 h-4 rounded-full" style={{ backgroundColor: p.color }} />
+                  <div className="w-10 h-10 rounded-full overflow-hidden bg-slate-700 border-2" style={{ borderColor: p.color }}>
+                    {p.photoURL ? (
+                      <img src={p.photoURL} alt="Profile" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-slate-400 font-bold">
+                        {p.name.substring(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                  </div>
                   <span className="text-white font-medium flex-1">{p.name}</span>
                   {i === 0 && <Crown size={16} className="text-yellow-400" />}
+                  {!p.isAI && (
+                    <button
+                      onClick={() => {
+                        setSelectedStatsPlayer({ id: p.id, name: p.name });
+                        setIsStatsModalOpen(true);
+                      }}
+                      className="p-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-300 transition-colors"
+                      title="View Stats"
+                    >
+                      <Trophy size={16} />
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -853,7 +914,12 @@ export const Game: React.FC = () => {
         />
         <StatsModal 
           isOpen={isStatsModalOpen} 
-          onClose={() => setIsStatsModalOpen(false)} 
+          onClose={() => {
+            setIsStatsModalOpen(false);
+            setSelectedStatsPlayer(null);
+          }}
+          userId={selectedStatsPlayer?.id}
+          userName={selectedStatsPlayer?.name}
         />
         <ProfilePhotoModal
           isOpen={isProfilePhotoModalOpen}
@@ -1332,7 +1398,12 @@ export const Game: React.FC = () => {
       
       <StatsModal 
         isOpen={isStatsModalOpen} 
-        onClose={() => setIsStatsModalOpen(false)} 
+        onClose={() => {
+          setIsStatsModalOpen(false);
+          setSelectedStatsPlayer(null);
+        }}
+        userId={selectedStatsPlayer?.id}
+        userName={selectedStatsPlayer?.name}
       />
 
       <ProfilePhotoModal
